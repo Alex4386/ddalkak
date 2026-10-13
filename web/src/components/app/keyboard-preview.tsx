@@ -11,7 +11,7 @@ const SLOT_KEYS: KeyId[] = ["tab", "gemini", "alt", "backspace"];
 export const slotKeys = (index: number): KeyId[] =>
   index < 4 ? [SLOT_KEYS[index]] : ["sym", String(index - 3) as KeyId];
 
-type Glyph = "shift" | "backspace" | "enter" | "meta" | "clicks" | "keyboard" | "voice";
+type Glyph = "shift" | "backspace" | "enter" | "meta" | "circle" | "keyboard" | "voice";
 type Cap = { x: number; w: number; label?: string; alt?: string; glyph?: Glyph; text?: string; id?: KeyId; red?: boolean };
 type Row = { y: number; h: number; caps: Cap[] };
 
@@ -76,7 +76,7 @@ const ROWS: Row[] = [
       { x: col(2), w: KEY_W, glyph: "meta" },
       // The space bar covers the middle four columns.
       { x: (col(3) + col(6)) / 2, w: 3 * PITCH + KEY_W },
-      { x: col(7), w: KEY_W, glyph: "clicks", id: "tab", red: true },
+      { x: col(7), w: KEY_W, glyph: "circle", id: "tab", red: true },
       { x: col(8), w: KEY_W, glyph: "keyboard", id: "alt" },
       { x: col(9), w: KEY_W, glyph: "voice", id: "gemini" },
     ],
@@ -114,12 +114,9 @@ function GlyphIcon({ glyph }: { glyph: Glyph }): ReactNode {
           {[-1, 1].flatMap((sx) => [-1, 1].map((sy) => <circle key={`${sx}${sy}`} cx={sx * 17} cy={sy * 13} r={8} />))}
         </g>
       );
-    case "clicks":
+    case "circle":
       return (
-        <g {...stroke} strokeWidth={11}>
-          <path d="M22,-16 A27,27 0 1 0 22,16" />
-          <path d="M2,0 H27" />
-        </g>
+        <circle r={24} {...stroke} strokeWidth={9} />
       );
     case "keyboard":
       return (
