@@ -24,7 +24,11 @@ export interface Register {
   value: number | null;
 }
 
+/** The keyboard keeps one key table per host OS and uses the active host's. */
+export type Os = "ios" | "android";
+
 export interface Slot {
+  os: Os;
   index: number;
   addr: number;
   kind: "remap" | "shortcut";
@@ -33,7 +37,7 @@ export interface Slot {
   enabled: boolean;
   description: string | null;
   factory: string | null;
-  /** Official choices as names; `null` = disabled. */
+  /** Suggested choices as names; `null` = disabled. */
   presets: (string | null)[];
 }
 
@@ -51,7 +55,9 @@ export interface Snapshot {
   synced: boolean;
   settings: Register[];
   info: Register[];
-  keySlots: Slot[];
+  keySlots: Record<Os, Slot[]>;
+  /** The table the keyboard is using: the active host's. */
+  activeOs: Os | null;
   hosts: Host[];
   wirelessCharging: boolean | null;
   status: number[] | null;
@@ -103,11 +109,12 @@ export interface Commands {
   resync(): Snapshot;
   set_register(args: { id: string; value: number }): Snapshot;
   set_flag(args: { bit: number; on: boolean }): Snapshot;
-  set_key_slot(args: { index: number; action: string | null }): Snapshot;
+  set_key_slot(args: { os: Os; index: number; action: string | null }): Snapshot;
   set_wireless_charging(args: { on: boolean }): Snapshot;
   set_host_name(args: { slot: number; name: string }): Snapshot;
+  set_host_os(args: { slot: number; os: Os }): Snapshot;
   remove_host(args: { slot: number }): Snapshot;
-  reset_key_slots(): Snapshot;
+  reset_key_slots(args: { os: Os }): Snapshot;
   send_raw(args: { payload: number[] }): RawReply;
   key_names(): string[];
   check_firmware(): FirmwareStatus;

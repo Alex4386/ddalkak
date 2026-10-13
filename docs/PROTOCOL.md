@@ -84,8 +84,14 @@ Factory values: `02`=`91`, `03`=30, `04`=5000, `06`=300, `08`=`05`, mask `FC 1F`
 
 ### Key slots
 
-13 slots at `0x16, 0x1A, … 0x46` (stride 4; only the first two bytes are
-used). A disabled slot (mask bit clear) gives the key its normal behaviour.
+The keyboard keeps two tables of 13 slots, one for iOS hosts and one for
+Android hosts, and uses the one matching bit 0 of the active host's type (see
+Paired hosts). Each slot is a 4-byte stride from `0x14`: the iOS value, then
+the Android value. Each table has a little-endian enable mask, `10–11` (iOS)
+and `12–13` (Android). A disabled slot (mask bit clear) gives the key its
+normal behaviour. The official Android app only ever sees the Android table,
+`12–13` and `0x16, 0x1A, … 0x46`; the addresses below are that table's.
+(Firmware 1.1.2: lookup at `0xd4ca`.)
 
 | Slot | Addr | Key           | Choices the Android app offers |
 |------|------|---------------|------------------|
@@ -102,6 +108,11 @@ The two groups use different value layouts:
 | 0–3 (remap) | `[modifier, key]`, either may be `00` | `E0 2C` Ctrl+Space, `E2 00` Alt, `00 2D` `-`, `E3 50` GUI+Left |
 | 4–12 (Sym shortcuts) | `[usage, page]`, page `00` keyboard / `FF` consumer | `29 00` Esc, `80 00` Vol+, `CD FF` Play/Pause |
 
+Factory values (firmware `0xd6b2`): Android mask `FC 1F`, iOS mask `F0 1F`
+(slots 0–3 off). The iOS table matches the Android one except Sym + 2/3/4,
+which are media keys there: `E9 FF` Volume Up, `EA FF` Volume Down, `E2 FF`
+Mute.
+
 `FF FF` is an erased slot. Choosing the "native" option clears the mask bit
 without touching the value; any other choice sets the bit, then writes the
 value:
@@ -117,9 +128,19 @@ value:
 Nine host slots, switched on the keyboard with power key + slot number.
 
 * **Type** — 2 bits per slot: `0D` holds slots 1–4, `0E` 5–8, `0F` slot 9,
-  lowest slot in the lowest bits. `0` empty, `2` iOS (also what a fresh
-  pairing reports), `3` Android, `1` never used by the app. After connecting,
-  the official app flips its own slot from `2` to `3`.
+  lowest slot in the lowest bits. They are two flags: bit 1 = a host has
+  bonded with the slot, bit 0 = Android key behaviour and key table. So `0`
+  empty, `2` iOS, `3` Android, and `1` Android without a bond. After
+  connecting, the official app flips its own slot from `2` to `3`.
+  * Only the firmware sets bit 1, when a host bonds (always as `2`). Protocol
+    writes can't set it (`0xdb0c` strips a newly set bond bit); writes to a
+    slot that already has it are taken as is.
+  * Clearing bit 1 unpairs the slot: the keyboard advertises for pairing on
+    it again. The re-pair key combo on an Android slot does exactly this,
+    which is where `1` comes from.
+  * Switching a bonded host between iOS and Android is therefore safe as long
+    as only bit 0 changes (`2` ↔ `3`). Power + A / Power + I do the same for
+    the active slot on the keyboard.
 * **Name** — 32-byte records, slot *s* at offset `32·(s−1)`:
   `[len, UTF-8 name zero-padded to 30 bytes, xor]` where `xor` is the XOR of
   the first 31 bytes. Erased flash (`FF…`) fails the check and means "no
@@ -172,9 +193,12 @@ From `CP-1000-V1.12.bin` (unencrypted, 175 044 bytes):
   the app never sends: `09 MASK VALUE` toggles three internal switches
   (bits 0–2), `08` takes up to 15 bytes and runs them through a table with an
   XOR check. Their purpose is unknown — don't send them.
-* Registers live in RAM at `0x20005644 + addr`. Writing `0C` (active host)
-  also copies that host's 2-bit type into a status byte the key handling
-  reads, so iOS/Android behaviour follows the type of the active slot.
+* Registers live in RAM at `0x20005644 + addr`. After every register write
+  (and at boot, and on Power + digit) the firmware copies bit 0 of the active
+  host's type into a status bit the key handling reads, so iOS/Android
+  behaviour follows the active slot. Besides the key table, it changes the
+  bottom-left key (Globe on iOS, Left Ctrl on Android) and Sym + the Alt key
+  (Alt + `.` on Android only).
 * One HID report map (no report IDs): keyboard with LED output (Caps Lock),
   modifiers declared as `E0–E3` only, 4 key slots, then a 16-bit consumer
   field starting with AL Keyboard Layout (`0x1AE`), Globe (`0x29D`) and
@@ -193,4 +217,5 @@ The official app then reads `2a26`/`2a24`/`2a25` and battery, and (on an
 Android host) rewrites the active slot's type as described above.
 `clicks_core::model::sync_plan()` reproduces the vendor-service part
 byte-for-byte (see the
-`replays_captured_sync` test).
+`replays_captured_sync` test), then also reads the iOS key table
+(`25 10 01`, `25 11 01`, `25 14 02` … `25 44 02`).

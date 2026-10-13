@@ -16,8 +16,8 @@ pub mod session;
 #[cfg(feature = "serde")]
 pub mod view;
 
-pub use keymap::KeyAction;
 pub use hosts::{Host, HostKind};
+pub use keymap::{KeyAction, Os};
 pub use model::{KeySlot, KeyboardState, ModelError};
 pub use protocol::{Message, Request, Response};
 pub use session::{Session, SessionEvent};

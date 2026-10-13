@@ -79,7 +79,7 @@ function Overview() {
           <div className="rounded-lg bg-muted/50 p-3">
             <dt className="text-xs text-muted-foreground">Remapped keys</dt>
             <dd className="mt-0.5 font-medium tabular-nums">
-              {snapshot.keySlots.filter((s) => (s.enabled ? s.description : null) !== s.factory).length} changed
+              {snapshot.keySlots[snapshot.activeOs ?? "android"].filter((s) => (s.enabled ? s.description : null) !== s.factory).length} changed
             </dd>
           </div>
         </dl>

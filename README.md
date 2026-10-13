@@ -81,8 +81,9 @@ cargo run -p clicks-cli -- set idleTimeout 3600     # ids: brightness dimTimeout
 cargo run -p clicks-cli -- flag capsLock off        # backlight symLock capsLock softReturn cursorMode backlightShortcut
 cargo run -p clicks-cli -- charging on
 cargo run -p clicks-cli -- key 0 ctrl+space         # slot 0 = Tab key; `key 0 off` restores Tab
-cargo run -p clicks-cli -- key 4 play/pause         # Sym + 1
+cargo run -p clicks-cli -- key 4 play/pause         # Sym + 1; edits the active host's table, or pass --os ios|android
 cargo run -p clicks-cli -- host-name 1 "Work phone"
+cargo run -p clicks-cli -- host-os 1 android        # switch a paired host's key table (ios|android)
 cargo run -p clicks-cli -- firmware                 # check for updates; --download --out DIR saves + verifies
 cargo run -p clicks-cli -- raw 25 08 01
 ```

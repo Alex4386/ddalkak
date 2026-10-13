@@ -17,7 +17,7 @@
 //! shape the Tauri backend returns (see `clicks_core::view`).
 
 use clicks_core::firmware::{self, FirmwareInfo};
-use clicks_core::{gatt, view, KeyAction, Request, Session, SessionEvent};
+use clicks_core::{gatt, view, KeyAction, Os, Request, Session, SessionEvent};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -29,6 +29,10 @@ fn to_js<T: Serialize + ?Sized>(value: &T) -> JsValue {
 
 fn js_err(e: impl std::fmt::Display) -> JsError {
     JsError::new(&e.to_string())
+}
+
+fn parse_os(os: &str) -> Result<Os, JsError> {
+    os.parse().map_err(js_err)
 }
 
 /// Session outcome, tagged by `type` for the page.
@@ -97,24 +101,34 @@ impl ClicksSession {
         self.inner.enqueue_with(|st| st.set_host_name(slot, name)).map(drop).map_err(js_err)
     }
 
+    /// Switches a paired host between the `"ios"` and `"android"` key tables.
+    #[wasm_bindgen(js_name = setHostOs)]
+    pub fn set_host_os(&mut self, slot: u8, os: &str) -> Result<(), JsError> {
+        let os = parse_os(os)?;
+        self.inner.enqueue_with(|st| st.set_host_os(slot, os)).map(drop).map_err(js_err)
+    }
+
     /// Forgets a paired host (fails for the active one).
     #[wasm_bindgen(js_name = removeHost)]
     pub fn remove_host(&mut self, slot: u8) -> Result<(), JsError> {
         self.inner.enqueue_with(|st| st.remove_host(slot)).map(drop).map_err(js_err)
     }
 
-    /// `action` is parsed like the CLI (`"Ctrl+Space"`, `"Play/Pause"`,
-    /// `"key:0x29"`); `undefined` disables the slot.
+    /// Edits `os`'s key table (`"ios"` or `"android"`). `action` is parsed
+    /// like the CLI (`"Ctrl+Space"`, `"Play/Pause"`, `"key:0x29"`);
+    /// `undefined` disables the slot.
     #[wasm_bindgen(js_name = setKeySlot)]
-    pub fn set_key_slot(&mut self, index: u8, action: Option<String>) -> Result<(), JsError> {
+    pub fn set_key_slot(&mut self, os: &str, index: u8, action: Option<String>) -> Result<(), JsError> {
+        let os = parse_os(os)?;
         let action = action.map(|a| a.parse::<KeyAction>()).transpose().map_err(js_err)?;
-        self.inner.enqueue_with(|st| st.set_key_slot(index, action)).map(drop).map_err(js_err)
+        self.inner.enqueue_with(|st| st.set_key_slot(os, index, action)).map(drop).map_err(js_err)
     }
 
     #[wasm_bindgen(js_name = resetKeySlots)]
-    pub fn reset_key_slots(&mut self) {
-        let reqs = self.inner.projected_state().reset_key_slots();
+    pub fn reset_key_slots(&mut self, os: &str) -> Result<(), JsError> {
+        let reqs = self.inner.projected_state().reset_key_slots(parse_os(os)?);
         self.inner.enqueue(reqs);
+        Ok(())
     }
 
     /// Queues an unmodelled request (`opcode` + raw args).

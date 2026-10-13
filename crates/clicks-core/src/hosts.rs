@@ -3,7 +3,10 @@
 //! The keyboard remembers [`SLOT_COUNT`] hosts. Each slot has
 //!
 //! * a 2-bit [`HostKind`] packed into registers `0x0D` (slots 1–4), `0x0E`
-//!   (5–8) and `0x0F` (9), lowest slot in the lowest bits;
+//!   (5–8) and `0x0F` (9), lowest slot in the lowest bits. Bit 1 means a host
+//!   has bonded with the slot, bit 0 selects the Android key table. The
+//!   firmware only sets bit 1 itself, when a host bonds (always as iOS), and
+//!   drops it from protocol writes that would set it;
 //! * an optional user-chosen name: a 32-byte record in the name table, read with
 //!   [`crate::protocol::Request::ReadBlock`] and written with
 //!   [`crate::protocol::Request::WriteBlock`]:
@@ -13,6 +16,7 @@
 //!
 //! Register `0x0C` holds the active slot (1-based).
 
+use crate::keymap::Os;
 use crate::protocol::Request;
 
 pub const SLOT_COUNT: u8 = 9;
@@ -30,7 +34,8 @@ pub const KIND_ADDR: u8 = 0x0D;
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub enum HostKind {
     Empty,
-    /// Value 1; never produced by the official app.
+    /// Value 1: Android table but no bond. The firmware leaves this after
+    /// re-pairing an Android slot; the official app never writes it.
     Unknown,
     /// Value 2; also what a freshly paired host starts as.
     Ios,
@@ -39,6 +44,28 @@ pub enum HostKind {
 }
 
 impl HostKind {
+    /// A bonded host using `os`'s key table.
+    pub fn paired(os: Os) -> Self {
+        match os {
+            Os::Ios => HostKind::Ios,
+            Os::Android => HostKind::Android,
+        }
+    }
+
+    /// Whether a host has bonded with the slot (bit 1).
+    pub fn is_paired(self) -> bool {
+        self.bits() & 2 != 0
+    }
+
+    /// The key table the keyboard uses while this slot is active (bit 0).
+    pub fn os(self) -> Os {
+        if self.bits() & 1 != 0 {
+            Os::Android
+        } else {
+            Os::Ios
+        }
+    }
+
     pub fn from_bits(bits: u8) -> Self {
         match bits & 3 {
             0 => HostKind::Empty,

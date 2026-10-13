@@ -1,7 +1,7 @@
 import { AppleIcon, EllipsisVerticalIcon, LaptopIcon, PencilIcon, SmartphoneIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
-import type { Host } from "@/backend";
+import type { Host, Os } from "@/backend";
 import { Badge } from "@/components/reui/badge";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import {
@@ -16,18 +16,33 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import { useKeyboard } from "@/hooks/use-keyboard";
 import { cn } from "cn";
 
-const KIND_LABEL: Record<Host["kind"], string> = { empty: "Empty", unknown: "Paired", ios: "iOS", android: "Android" };
+// "unknown" (type 1) is what the keyboard leaves after re-pairing an Android
+// slot: Android keys, but nothing bonded.
+const KIND_LABEL: Record<Host["kind"], string> = { empty: "Empty", unknown: "Not paired", ios: "iOS", android: "Android" };
 const KIND_ICON = { empty: LaptopIcon, unknown: LaptopIcon, ios: AppleIcon, android: SmartphoneIcon };
 
 function HostCard({ host, onRename, onRemove }: { host: Host; onRename(): void; onRemove(): void }) {
-  const { busy } = useKeyboard();
+  const { busy, apply } = useKeyboard();
   const empty = host.kind === "empty";
+  // Only bonded hosts can switch: the keyboard won't let the bond bit be set
+  // over Bluetooth, so only the iOS/Android bit is ever written.
+  const paired = host.kind === "ios" || host.kind === "android";
   const Icon = KIND_ICON[host.kind];
   return (
     <FramePanel
@@ -73,7 +88,31 @@ function HostCard({ host, onRename, onRemove }: { host: Host; onRename(): void; 
           <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" disabled={busy} aria-label="Host actions" />}>
             <EllipsisVerticalIcon />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuContent align="end" className="w-48">
+            {paired && (
+              <>
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Device type</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={host.kind}
+                    onValueChange={(v) => {
+                      const os = v as Os;
+                      if (os !== host.kind) apply("set_host_os", { slot: host.slot, os }, `Slot ${host.slot} now uses ${KIND_LABEL[os]} keys`);
+                    }}
+                  >
+                    <DropdownMenuRadioItem value="ios" closeOnClick>
+                      <AppleIcon />
+                      iOS
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="android" closeOnClick>
+                      <SmartphoneIcon />
+                      Android
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+              </>
+            )}
             <DropdownMenuItem onClick={onRename}>
               <PencilIcon />
               Rename
@@ -101,7 +140,8 @@ export function HostsPanel() {
       <FrameHeader>
         <FrameTitle>Paired devices</FrameTitle>
         <FrameDescription className="flex flex-wrap items-center gap-1">
-          Switch on the keyboard with <Kbd>Power</Kbd> + <Kbd>1</Kbd>…<Kbd>9</Kbd>.
+          Switch on the keyboard with <Kbd>Power</Kbd> + <Kbd>1</Kbd>…<Kbd>9</Kbd>. A device's type picks which key
+          table it uses; new devices start as iOS.
         </FrameDescription>
       </FrameHeader>
       {snapshot.hosts.length ? (

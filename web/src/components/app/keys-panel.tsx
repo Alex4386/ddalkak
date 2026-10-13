@@ -1,7 +1,7 @@
-import { CheckIcon, RotateCcwIcon } from "lucide-react";
+import { AppleIcon, CheckIcon, RotateCcwIcon, SmartphoneIcon } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import type { Slot } from "@/backend";
+import type { Os, Slot } from "@/backend";
 import { Badge } from "@/components/reui/badge";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import {
@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useKeyboard } from "@/hooks/use-keyboard";
 import { setHighlight } from "@/hooks/use-highlight";
 
@@ -28,7 +29,7 @@ const CUSTOM = "\u0000custom";
 function SlotEditor({ slot }: { slot: Slot }) {
   const { apply, busy } = useKeyboard();
   const current = slot.enabled ? slot.description : null;
-  // The official choices, plus the factory and current values when they aren't among them.
+  // The suggested choices, plus the factory and current values when they aren't among them.
   const presets = [...new Set([...slot.presets, slot.factory, current])].filter((p): p is string => p != null);
   const known = current == null || presets.includes(current);
   // Remounted (via `key`) whenever the slot's value changes.
@@ -44,7 +45,7 @@ function SlotEditor({ slot }: { slot: Slot }) {
 
   const commit = () => {
     const action = text.trim();
-    if (action && action !== current) apply("set_key_slot", { index: slot.index, action });
+    if (action && action !== current) apply("set_key_slot", { os: slot.os, index: slot.index, action });
   };
 
   return (
@@ -56,7 +57,7 @@ function SlotEditor({ slot }: { slot: Slot }) {
         onValueChange={(v) => {
           if (v === CUSTOM) return setCustom(true);
           setCustom(false);
-          apply("set_key_slot", { index: slot.index, action: v === OFF ? null : v });
+          apply("set_key_slot", { os: slot.os, index: slot.index, action: v === OFF ? null : v });
         }}
       >
         <SelectTrigger className="w-full" aria-label={`Action for ${slot.label}`}>
@@ -123,7 +124,9 @@ const hoverProps = (index: number) => ({
   onBlur: () => setHighlight(null),
 });
 
-function ResetKeys() {
+const OS_LABEL: Record<Os, string> = { ios: "iOS", android: "Android" };
+
+function ResetKeys({ os }: { os: Os }) {
   const { apply, busy } = useKeyboard();
   const [open, setOpen] = useState(false);
   return (
@@ -134,9 +137,10 @@ function ResetKeys() {
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Restore factory keys?</AlertDialogTitle>
+          <AlertDialogTitle>Restore factory {OS_LABEL[os]} keys?</AlertDialogTitle>
           <AlertDialogDescription>
-            Every remapped key and Sym shortcut goes back to how the keyboard shipped.
+            Every remapped key and Sym shortcut in the {OS_LABEL[os]} table goes back to how the keyboard shipped. The
+            other table isn't touched.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -144,7 +148,7 @@ function ResetKeys() {
           <AlertDialogAction
             onClick={() => {
               setOpen(false);
-              apply("reset_key_slots", undefined, "Keys restored");
+              apply("reset_key_slots", { os }, `${OS_LABEL[os]} keys restored`);
             }}
           >
             Restore
@@ -155,11 +159,45 @@ function ResetKeys() {
   );
 }
 
+function TablePicker({ os, onChange, active }: { os: Os; onChange: (os: Os) => void; active: Os | null }) {
+  return (
+    <Frame>
+      <FramePanel className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-0.5">
+          <div className="text-sm font-medium">Key table</div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            The keyboard keeps separate keys for iOS and Android devices and uses the one matching the device you're
+            typing on. Choose each device's type under Devices.
+          </p>
+        </div>
+        <Tabs value={os} onValueChange={(v) => onChange(v as Os)} className="shrink-0">
+          <TabsList>
+            {(["ios", "android"] as const).map((o) => (
+              <TabsTrigger key={o} value={o} className="px-3">
+                {o === "ios" ? <AppleIcon /> : <SmartphoneIcon />}
+                {OS_LABEL[o]}
+                {active === o && (
+                  <Badge variant="success-light" size="sm" radius="full">
+                    In use
+                  </Badge>
+                )}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </FramePanel>
+    </Frame>
+  );
+}
+
 export function KeysPanel() {
   const { snapshot, keyNames } = useKeyboard();
+  const [picked, setPicked] = useState<Os | null>(null);
   if (!snapshot) return null;
-  const remap = snapshot.keySlots.filter((s) => s.kind === "remap");
-  const shortcuts = snapshot.keySlots.filter((s) => s.kind === "shortcut");
+  const os = picked ?? snapshot.activeOs ?? "android";
+  const slots = snapshot.keySlots[os];
+  const remap = slots.filter((s) => s.kind === "remap");
+  const shortcuts = slots.filter((s) => s.kind === "shortcut");
 
   return (
     <div className="flex flex-col gap-4">
@@ -169,20 +207,17 @@ export function KeysPanel() {
         ))}
       </datalist>
 
+      <TablePicker os={os} onChange={setPicked} active={snapshot.activeOs} />
+
       <Frame>
         <FrameHeader className="flex-row items-start justify-between gap-3">
           <div>
-            <FrameTitle className="flex items-center gap-2">
-              Key remapping
-              <Badge variant="warning-light" size="sm" radius="full">
-                Android app only
-              </Badge>
-            </FrameTitle>
+            <FrameTitle>Key remapping · {OS_LABEL[os]}</FrameTitle>
             <FrameDescription>
               A key, or a modifier with a key (<code>Ctrl+Space</code>). Custom accepts <code>key:0x29</code> too.
             </FrameDescription>
           </div>
-          <ResetKeys />
+          <ResetKeys os={os} />
         </FrameHeader>
         <FramePanel className="divide-y p-0">
           {remap.map((s) => (
@@ -195,7 +230,7 @@ export function KeysPanel() {
                 <SlotHeader slot={s} />
                 <p className="text-xs text-muted-foreground">Factory: {s.factory ?? `Off (${s.native})`}</p>
               </div>
-              <SlotEditor key={`${s.enabled}:${s.description}`} slot={s} />
+              <SlotEditor key={`${os}:${s.enabled}:${s.description}`} slot={s} />
             </div>
           ))}
         </FramePanel>
@@ -203,7 +238,7 @@ export function KeysPanel() {
 
       <Frame>
         <FrameHeader>
-          <FrameTitle>Sym shortcuts</FrameTitle>
+          <FrameTitle>Sym shortcuts · {OS_LABEL[os]}</FrameTitle>
           <FrameDescription>
             Hold Sym and press a number. A key (<code>Escape</code>) or a media key (<code>Play/Pause</code>).
           </FrameDescription>
@@ -215,7 +250,7 @@ export function KeysPanel() {
                 <SlotHeader slot={s} />
                 <span className="truncate text-xs text-muted-foreground">{s.factory ?? "Off"}</span>
               </div>
-              <SlotEditor key={`${s.enabled}:${s.description}`} slot={s} />
+              <SlotEditor key={`${os}:${s.enabled}:${s.description}`} slot={s} />
             </FramePanel>
           ))}
         </div>

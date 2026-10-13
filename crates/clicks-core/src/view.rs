@@ -4,7 +4,7 @@
 
 use serde::Serialize;
 
-use crate::keymap::{self, KeyAction};
+use crate::keymap::{self, KeyAction, Os};
 use crate::registers::{self, RegisterInfo};
 use crate::{Host, KeySlot, KeyboardState};
 
@@ -28,6 +28,14 @@ pub struct SlotView {
     pub presets: Vec<Option<String>>,
 }
 
+/// The keyboard's two key tables; it uses the active host's.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyTables {
+    pub ios: Vec<SlotView>,
+    pub android: Vec<SlotView>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostView {
@@ -42,7 +50,9 @@ pub struct Snapshot {
     pub synced: bool,
     pub settings: Vec<RegisterView>,
     pub info: Vec<RegisterView>,
-    pub key_slots: Vec<SlotView>,
+    pub key_slots: KeyTables,
+    /// Which table the keyboard is using: the active host's.
+    pub active_os: Option<Os>,
     pub hosts: Vec<HostView>,
     pub wireless_charging: Option<bool>,
     pub status: Option<Vec<u8>>,
@@ -54,24 +64,29 @@ pub fn snapshot(state: &KeyboardState) -> Snapshot {
         synced: state.is_synced(),
         settings: registers::SETTINGS.iter().map(reg).collect(),
         info: registers::INFO.iter().map(reg).collect(),
-        key_slots: state
-            .key_slots()
-            .into_iter()
-            .map(|slot| {
-                let info = &keymap::SLOTS[slot.index as usize];
-                SlotView {
-                    addr: keymap::slot_addr(slot.index),
-                    native: info.native,
-                    factory: keymap::FACTORY_DEFAULTS[slot.index as usize].map(KeyAction::describe),
-                    presets: info.presets.iter().map(|p| p.map(KeyAction::describe)).collect(),
-                    slot,
-                }
-            })
-            .collect(),
+        key_slots: KeyTables { ios: slot_views(state, Os::Ios), android: slot_views(state, Os::Android) },
+        active_os: state.active_os(),
         hosts: state.hosts().into_iter().map(|host| HostView { display_name: host.display_name(), host }).collect(),
         wireless_charging: state.wireless_charging(),
         status: state.status().map(<[u8]>::to_vec),
     }
+}
+
+fn slot_views(state: &KeyboardState, os: Os) -> Vec<SlotView> {
+    state
+        .key_slots(os)
+        .into_iter()
+        .map(|slot| {
+            let info = &keymap::SLOTS[slot.index as usize];
+            SlotView {
+                addr: keymap::slot_addr(os, slot.index),
+                native: info.native,
+                factory: keymap::factory_defaults(os)[slot.index as usize].map(KeyAction::describe),
+                presets: info.presets(os).iter().map(|p| p.map(KeyAction::describe)).collect(),
+                slot,
+            }
+        })
+        .collect()
 }
 
 /// Names a key-slot editor can offer as suggestions.

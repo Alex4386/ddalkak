@@ -1,9 +1,12 @@
 //! Programmable key slots.
 //!
-//! The keyboard exposes [`SLOT_COUNT`] slots, 4 bytes apart starting at
-//! [`SLOT_BASE`]; only the first two bytes of each are used. Registers
-//! `0x12`/`0x13` form a little-endian bitmask with one enable bit per slot; a
-//! disabled slot falls back to the key's normal behaviour.
+//! The keyboard keeps two tables of [`SLOT_COUNT`] slots, one per host [`Os`],
+//! and uses the one matching the active host's type. Each slot is a 4-byte
+//! stride starting at `0x14` holding the iOS value, then the Android value.
+//! A little-endian enable mask per table (`0x10`/`0x11` iOS, `0x12`/`0x13`
+//! Android) has one bit per slot; a disabled slot falls back to the key's
+//! normal behaviour. (Firmware 1.1.2: lookup at `0xd4ca`, factory values at
+//! `0xd6b2`.)
 //!
 //! | slots | [`SlotKind`]  | key                        | value                         |
 //! |-------|---------------|----------------------------|-------------------------------|
@@ -13,19 +16,65 @@
 //! Examples from the official app: `e0 2c` Ctrl+Space, `e2 00` Alt, `00 2d`
 //! "-", `29 00` Escape, `cd ff` Play/Pause. `ff ff` is an erased slot.
 
-pub const SLOT_BASE: u8 = 0x16;
 pub const SLOT_STRIDE: u8 = 4;
 pub const SLOT_COUNT: u8 = 13;
 pub const SLOT_VALUE_LEN: u8 = 2;
-pub const ENABLE_MASK_ADDR: u8 = 0x12;
 
-pub fn slot_addr(index: u8) -> u8 {
-    SLOT_BASE + index * SLOT_STRIDE
+/// Which key table a host uses. The keyboard picks it from bit 0 of the
+/// active host's type, so the official Android app only ever sees `Android`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub enum Os {
+    Ios,
+    Android,
+}
+
+impl Os {
+    pub const ALL: [Os; 2] = [Os::Ios, Os::Android];
+
+    /// First byte of this table's enable mask.
+    pub fn mask_addr(self) -> u8 {
+        match self {
+            Os::Ios => 0x10,
+            Os::Android => 0x12,
+        }
+    }
+
+    fn slot_base(self) -> u8 {
+        match self {
+            Os::Ios => 0x14,
+            Os::Android => 0x16,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Os::Ios => "iOS",
+            Os::Android => "Android",
+        }
+    }
+}
+
+impl std::str::FromStr for Os {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "ios" => Ok(Os::Ios),
+            "android" => Ok(Os::Android),
+            _ => Err(format!("unknown OS {s:?} (expected ios or android)")),
+        }
+    }
+}
+
+pub fn slot_addr(os: Os, index: u8) -> u8 {
+    os.slot_base() + index * SLOT_STRIDE
 }
 
 /// Register byte and bit holding the enable flag for `index`.
-pub fn enable_bit(index: u8) -> (u8, u8) {
-    (ENABLE_MASK_ADDR + index / 8, index % 8)
+pub fn enable_bit(os: Os, index: u8) -> (u8, u8) {
+    (os.mask_addr() + index / 8, index % 8)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -47,9 +96,21 @@ pub struct SlotInfo {
     pub label: &'static str,
     /// What the key does while the slot is disabled.
     pub native: &'static str,
-    /// Choices the official app offers (`None` = disabled).
+    /// Choices the official Android app offers (`None` = disabled).
     #[cfg_attr(feature = "serde", serde(skip))]
     pub presets: &'static [Option<KeyAction>],
+}
+
+impl SlotInfo {
+    /// Choices for `os`. The iOS table has no official app to copy from, so
+    /// it gets the factory values plus the Sym shortcuts with media-key volume.
+    pub fn presets(&self, os: Os) -> &'static [Option<KeyAction>] {
+        match (os, self.kind) {
+            (Os::Android, _) => self.presets,
+            (Os::Ios, SlotKind::Remap) => &[None],
+            (Os::Ios, SlotKind::Shortcut) => IOS_SHORTCUT_PRESETS,
+        }
+    }
 }
 
 const fn key(usage: u8) -> Option<KeyAction> {
@@ -69,6 +130,23 @@ const SHORTCUT_PRESETS: &[Option<KeyAction>] = &[
     key(0x80),
     key(0x81),
     key(0x7F),
+    media(0xCD),
+    media(0xB5),
+    media(0xB6),
+    key(0x4B),
+    key(0x4E),
+    key(0x4A),
+    key(0x4D),
+    key(0x2F),
+    key(0x30),
+];
+
+const IOS_SHORTCUT_PRESETS: &[Option<KeyAction>] = &[
+    None,
+    key(0x29),
+    media(0xE9),
+    media(0xEA),
+    media(0xE2),
     media(0xCD),
     media(0xB5),
     media(0xB6),
@@ -188,7 +266,32 @@ pub fn is_modifier(usage: u8) -> bool {
     (0xE0..=0xE7).contains(&usage)
 }
 
-/// Defaults read from a factory-fresh keyboard (firmware 1.1.0).
+pub fn factory_defaults(os: Os) -> &'static [Option<KeyAction>; SLOT_COUNT as usize] {
+    match os {
+        Os::Ios => &IOS_FACTORY_DEFAULTS,
+        Os::Android => &FACTORY_DEFAULTS,
+    }
+}
+
+/// iOS table as the firmware initialises it (1.1.2, `0xd6b2`): remap slots
+/// off, volume and mute as media keys.
+pub const IOS_FACTORY_DEFAULTS: [Option<KeyAction>; SLOT_COUNT as usize] = [
+    None,
+    None,
+    None,
+    None,
+    key(0x29),
+    media(0xE9),
+    media(0xEA),
+    media(0xE2),
+    media(0xCD),
+    media(0xB5),
+    media(0xB6),
+    key(0x4B),
+    key(0x4E),
+];
+
+/// Android table read from a factory-fresh keyboard (firmware 1.1.0).
 pub const FACTORY_DEFAULTS: [Option<KeyAction>; SLOT_COUNT as usize] = [
     None,
     None,
@@ -265,7 +368,7 @@ pub fn keyboard_usage_name(usage: u8) -> Option<&'static str> {
 pub fn consumer_usage_name(usage: u8) -> Option<&'static str> {
     Some(match usage {
         0x30 => "Power",
-        0x40 => "Menu",
+        0x40 => "Menu (media)",
         0x6F => "Brightness Up",
         0x70 => "Brightness Down",
         0xB0 => "Play",
@@ -277,9 +380,9 @@ pub fn consumer_usage_name(usage: u8) -> Option<&'static str> {
         0xB7 => "Stop",
         0xB8 => "Eject",
         0xCD => "Play/Pause",
-        0xE2 => "Mute",
-        0xE9 => "Volume Up",
-        0xEA => "Volume Down",
+        0xE2 => "Mute (media)",
+        0xE9 => "Volume Up (media)",
+        0xEA => "Volume Down (media)",
         _ => return None,
     })
 }
@@ -394,10 +497,12 @@ mod tests {
         assert_eq!(KeyAction::from_bytes([0x00, 0x2D]), Some(KeyAction::Key { usage: 0x2D }));
         assert_eq!(KeyAction::Combo { modifier: 0xE0, usage: 0x2C }.encode(SlotKind::Shortcut), None);
         for s in &SLOTS {
-            for p in s.presets.iter().flatten() {
-                let bytes = p.encode(s.kind).unwrap();
-                assert_eq!(KeyAction::from_bytes(bytes), Some(*p), "{}", s.label);
-                assert_eq!(p.describe().parse(), Ok(*p), "{}", p.describe());
+            for os in Os::ALL {
+                for p in s.presets(os).iter().flatten() {
+                    let bytes = p.encode(s.kind).unwrap();
+                    assert_eq!(KeyAction::from_bytes(bytes), Some(*p), "{}", s.label);
+                    assert_eq!(p.describe().parse(), Ok(*p), "{}", p.describe());
+                }
             }
         }
     }
@@ -414,16 +519,21 @@ mod tests {
         assert_eq!(p("raw:e207"), Ok(KeyAction::Combo { modifier: 0xE2, usage: 0x07 }));
         assert!(p("a+b").is_err());
         assert!(p("nonsense").is_err());
-        for a in FACTORY_DEFAULTS.iter().flatten() {
+        assert_eq!(p("Volume Up (media)"), Ok(KeyAction::Consumer { usage: 0xE9 }));
+        for a in FACTORY_DEFAULTS.iter().chain(&IOS_FACTORY_DEFAULTS).flatten() {
             assert_eq!(p(&a.describe()), Ok(*a), "{}", a.describe());
         }
     }
 
     #[test]
     fn slot_layout() {
-        assert_eq!(slot_addr(0), 0x16);
-        assert_eq!(slot_addr(12), 0x46);
-        assert_eq!(enable_bit(1), (0x12, 1));
-        assert_eq!(enable_bit(9), (0x13, 1));
+        assert_eq!(slot_addr(Os::Android, 0), 0x16);
+        assert_eq!(slot_addr(Os::Android, 12), 0x46);
+        assert_eq!(slot_addr(Os::Ios, 0), 0x14);
+        assert_eq!(slot_addr(Os::Ios, 12), 0x44);
+        assert_eq!(enable_bit(Os::Android, 1), (0x12, 1));
+        assert_eq!(enable_bit(Os::Android, 9), (0x13, 1));
+        assert_eq!(enable_bit(Os::Ios, 9), (0x11, 1));
+        assert_eq!("iOS".parse(), Ok(Os::Ios));
     }
 }

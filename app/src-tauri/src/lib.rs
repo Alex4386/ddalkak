@@ -5,7 +5,7 @@ use std::time::Duration;
 use clicks_ble::btleplug::platform::{Adapter, Peripheral};
 use clicks_ble::{Event, Keyboard};
 use clicks_core::firmware::{self, FirmwareInfo};
-use clicks_core::keymap::KeyAction;
+use clicks_core::keymap::{KeyAction, Os};
 use clicks_core::view::{self, Snapshot};
 use clicks_core::Request;
 use serde::Serialize;
@@ -156,12 +156,13 @@ async fn set_flag(state: State<'_, AppState>, bit: u8, on: bool) -> CmdResult<Sn
     Ok(view::snapshot(&s))
 }
 
-/// `action` is parsed with `KeyAction::from_str`; `None` disables the slot.
+/// Edits `os`'s key table. `action` is parsed with `KeyAction::from_str`;
+/// `None` disables the slot.
 #[tauri::command]
-async fn set_key_slot(state: State<'_, AppState>, index: u8, action: Option<String>) -> CmdResult<Snapshot> {
+async fn set_key_slot(state: State<'_, AppState>, os: Os, index: u8, action: Option<String>) -> CmdResult<Snapshot> {
     let action = action.map(|a| a.parse::<KeyAction>()).transpose().map_err(err)?;
     let kb = state.keyboard().await?;
-    let s = kb.update(|s| s.set_key_slot(index, action)).await.map_err(err)?;
+    let s = kb.update(|s| s.set_key_slot(os, index, action)).await.map_err(err)?;
     Ok(view::snapshot(&s))
 }
 
@@ -180,6 +181,13 @@ async fn set_host_name(state: State<'_, AppState>, slot: u8, name: String) -> Cm
 }
 
 #[tauri::command]
+async fn set_host_os(state: State<'_, AppState>, slot: u8, os: Os) -> CmdResult<Snapshot> {
+    let kb = state.keyboard().await?;
+    let s = kb.update(|s| s.set_host_os(slot, os)).await.map_err(err)?;
+    Ok(view::snapshot(&s))
+}
+
+#[tauri::command]
 async fn remove_host(state: State<'_, AppState>, slot: u8) -> CmdResult<Snapshot> {
     let kb = state.keyboard().await?;
     let s = kb.update(|s| s.remove_host(slot)).await.map_err(err)?;
@@ -187,9 +195,9 @@ async fn remove_host(state: State<'_, AppState>, slot: u8) -> CmdResult<Snapshot
 }
 
 #[tauri::command]
-async fn reset_key_slots(state: State<'_, AppState>) -> CmdResult<Snapshot> {
+async fn reset_key_slots(state: State<'_, AppState>, os: Os) -> CmdResult<Snapshot> {
     let kb = state.keyboard().await?;
-    let s = kb.update(|s| Ok(s.reset_key_slots())).await.map_err(err)?;
+    let s = kb.update(|s| Ok(s.reset_key_slots(os))).await.map_err(err)?;
     Ok(view::snapshot(&s))
 }
 
@@ -292,6 +300,7 @@ pub fn run() {
             set_key_slot,
             set_wireless_charging,
             set_host_name,
+            set_host_os,
             remove_host,
             reset_key_slots,
             send_raw,

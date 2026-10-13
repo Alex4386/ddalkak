@@ -109,13 +109,15 @@ public final class ClicksKeyboard: NSObject, ObservableObject {
 
     public func setRegister(_ id: String, _ value: UInt32) { run { try self.session.setRegister(id: id, value: value) } }
     public func setFlag(_ bit: UInt8, _ on: Bool) { run { try self.session.setFlag(bit: bit, on: on) } }
-    public func setKeySlot(_ index: UInt8, _ action: FfiKeyAction?) {
-        run { try self.session.setKeySlot(index: index, action: action) }
+    public func setKeySlot(_ os: FfiOs, _ index: UInt8, _ action: FfiKeyAction?) {
+        run { try self.session.setKeySlot(os: os, index: index, action: action) }
     }
-    public func resetKeySlots() { run { self.session.resetKeySlots() } }
+    public func resetKeySlots(_ os: FfiOs) { run { self.session.resetKeySlots(os: os) } }
     public func setWirelessCharging(_ on: Bool) { run { self.session.setWirelessCharging(on: on) } }
     /// `slot` is 1-based; an empty name restores the default label.
     public func setHostName(_ slot: UInt8, _ name: String) { run { try self.session.setHostName(slot: slot, name: name) } }
+    /// Switches a paired host between the iOS and Android key tables.
+    public func setHostOs(_ slot: UInt8, _ os: FfiOs) { run { try self.session.setHostOs(slot: slot, os: os) } }
     public func removeHost(_ slot: UInt8) { run { try self.session.removeHost(slot: slot) } }
 
     private func run(_ body: () throws -> Void) {

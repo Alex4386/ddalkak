@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use crate::hosts::{self, Host, HostKind};
-use crate::keymap::{self, KeyAction, SlotKind, SLOT_COUNT};
+use crate::keymap::{self, KeyAction, Os, SlotKind, SLOT_COUNT};
 use crate::protocol::{le_value, Request, Response, CONTROL_WIRELESS_CHARGING};
 use crate::registers::{self, RegisterInfo};
 
@@ -23,6 +23,7 @@ pub struct KeyboardState {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct KeySlot {
+    pub os: Os,
     pub index: u8,
     pub kind: SlotKind,
     pub label: &'static str,
@@ -38,6 +39,9 @@ pub enum ModelError {
     SlotOutOfRange(u8),
     UnsupportedAction { slot: &'static str, action: KeyAction },
     HostOutOfRange(u8),
+    /// Only bonded hosts can switch OS; the firmware drops the bond bit from
+    /// writes, so an empty slot can't be made into one.
+    HostNotPaired(u8),
     /// The official app refuses to clear the slot the keyboard is using.
     ActiveHost(u8),
     /// The enable mask must be read before a slot can be toggled.
@@ -58,8 +62,13 @@ impl std::fmt::Display for ModelError {
                 };
                 write!(f, "{slot} cannot be assigned {what}")
             }
-            ModelError::HostOutOfRange(s) => write!(f, "host slot {s} does not exist (1–{})", hosts::SLOT_COUNT),
-            ModelError::ActiveHost(s) => write!(f, "host slot {s} is in use; switch to another host first"),
+            ModelError::HostOutOfRange(s) => {
+                write!(f, "host slot {s} does not exist (1–{})", hosts::SLOT_COUNT)
+            }
+            ModelError::HostNotPaired(s) => write!(f, "host slot {s} has no paired device"),
+            ModelError::ActiveHost(s) => {
+                write!(f, "host slot {s} is in use; switch to another host first")
+            }
             ModelError::NotSynced => write!(f, "state has not been read from the keyboard yet"),
         }
     }
@@ -67,7 +76,8 @@ impl std::fmt::Display for ModelError {
 
 impl std::error::Error for ModelError {}
 
-/// The reads the official app performs right after connecting, in the same order.
+/// The reads the official app performs right after connecting, in the same
+/// order, then the iOS key table, which the Android app never reads.
 pub fn sync_plan() -> Vec<Request> {
     let reg = |r: &RegisterInfo| Request::ReadRegister { addr: r.addr, len: r.len };
     let mut plan = vec![
@@ -77,15 +87,21 @@ pub fn sync_plan() -> Vec<Request> {
         reg(&registers::DIM_TIMEOUT),
         Request::ReadStatus,
         reg(&registers::CHARGE_RESERVE),
-        Request::ReadRegister { addr: keymap::ENABLE_MASK_ADDR, len: 1 },
-        Request::ReadRegister { addr: keymap::ENABLE_MASK_ADDR + 1, len: 1 },
     ];
-    plan.extend((0..SLOT_COUNT).map(|i| Request::ReadRegister {
-        addr: keymap::slot_addr(i),
-        len: keymap::SLOT_VALUE_LEN,
-    }));
+    plan.extend(key_table_plan(Os::Android));
     plan.extend(registers::INFO.iter().map(reg));
     plan.extend(host_table_plan());
+    plan.extend(key_table_plan(Os::Ios));
+    plan
+}
+
+pub fn key_table_plan(os: Os) -> Vec<Request> {
+    let mask = os.mask_addr();
+    let mut plan = vec![Request::ReadRegister { addr: mask, len: 1 }, Request::ReadRegister { addr: mask + 1, len: 1 }];
+    plan.extend((0..SLOT_COUNT).map(|i| Request::ReadRegister {
+        addr: keymap::slot_addr(os, i),
+        len: keymap::SLOT_VALUE_LEN,
+    }));
     plan
 }
 
@@ -173,16 +189,17 @@ impl KeyboardState {
         self.control_bits().map(|b| b & CONTROL_WIRELESS_CHARGING != 0)
     }
 
-    pub fn key_slot(&self, index: u8) -> Option<KeySlot> {
+    pub fn key_slot(&self, os: Os, index: u8) -> Option<KeySlot> {
         if index >= SLOT_COUNT {
             return None;
         }
         let info = keymap::slot(index)?;
-        let (mask_addr, bit) = keymap::enable_bit(index);
+        let (mask_addr, bit) = keymap::enable_bit(os, index);
         let enabled = self.byte(mask_addr)? & (1 << bit) != 0;
-        let raw = self.read(keymap::slot_addr(index), keymap::SLOT_VALUE_LEN)?;
+        let raw = self.read(keymap::slot_addr(os, index), keymap::SLOT_VALUE_LEN)?;
         let action = KeyAction::from_bytes([raw[0], raw[1]]);
         Some(KeySlot {
+            os,
             index,
             kind: info.kind,
             label: info.label,
@@ -192,12 +209,17 @@ impl KeyboardState {
         })
     }
 
-    pub fn key_slots(&self) -> Vec<KeySlot> {
-        (0..SLOT_COUNT).filter_map(|i| self.key_slot(i)).collect()
+    pub fn key_slots(&self, os: Os) -> Vec<KeySlot> {
+        (0..SLOT_COUNT).filter_map(|i| self.key_slot(os, i)).collect()
     }
 
     pub fn active_host(&self) -> Option<u8> {
         self.byte(hosts::ACTIVE_ADDR)
+    }
+
+    /// The key table in use right now: the active host's.
+    pub fn active_os(&self) -> Option<Os> {
+        self.active_host().and_then(|slot| self.host_kind(slot)).map(HostKind::os)
     }
 
     pub fn host_kind(&self, slot: u8) -> Option<HostKind> {
@@ -289,6 +311,18 @@ impl KeyboardState {
         Ok(vec![Request::write_u8(addr, (current & !(3 << shift)) | (kind.bits() << shift))])
     }
 
+    /// Switches a paired host between the iOS and Android key tables. Only
+    /// bit 0 changes: clearing the bond bit would unpair the host, and the
+    /// firmware refuses to set it again over the protocol.
+    pub fn set_host_os(&self, slot: u8, os: Os) -> Result<Vec<Request>, ModelError> {
+        Self::check_host(slot)?;
+        let kind = self.host_kind(slot).ok_or(ModelError::NotSynced)?;
+        if !kind.is_paired() {
+            return Err(ModelError::HostNotPaired(slot));
+        }
+        self.set_host_kind(slot, HostKind::paired(os))
+    }
+
     /// Forgets a paired host, like the official app's "Remove Device": clears
     /// its name, then marks the slot empty.
     pub fn remove_host(&self, slot: u8) -> Result<Vec<Request>, ModelError> {
@@ -303,9 +337,9 @@ impl KeyboardState {
 
     /// Assigns (`Some`) or disables (`None`) a key slot. Mirrors the official
     /// app: the enable mask byte is written first, then the slot value.
-    pub fn set_key_slot(&self, index: u8, action: Option<KeyAction>) -> Result<Vec<Request>, ModelError> {
+    pub fn set_key_slot(&self, os: Os, index: u8, action: Option<KeyAction>) -> Result<Vec<Request>, ModelError> {
         let info = keymap::slot(index).ok_or(ModelError::SlotOutOfRange(index))?;
-        let (mask_addr, bit) = keymap::enable_bit(index);
+        let (mask_addr, bit) = keymap::enable_bit(os, index);
         let mask = self.byte(mask_addr).ok_or(ModelError::NotSynced)?;
         match action {
             None => Ok(vec![Request::write_u8(mask_addr, mask & !(1 << bit))]),
@@ -314,27 +348,28 @@ impl KeyboardState {
                     action.encode(info.kind).ok_or(ModelError::UnsupportedAction { slot: info.label, action })?;
                 Ok(vec![
                     Request::write_u8(mask_addr, mask | (1 << bit)),
-                    Request::WriteRegister { addr: keymap::slot_addr(index), data: bytes.to_vec() },
+                    Request::WriteRegister { addr: keymap::slot_addr(os, index), data: bytes.to_vec() },
                 ])
             }
         }
     }
 
-    /// Restores every slot to [`keymap::FACTORY_DEFAULTS`].
-    pub fn reset_key_slots(&self) -> Vec<Request> {
+    /// Restores every slot of `os`'s table to [`keymap::factory_defaults`].
+    pub fn reset_key_slots(&self, os: Os) -> Vec<Request> {
         let mut mask: u16 = 0;
         let mut out = Vec::new();
-        for (i, default) in keymap::FACTORY_DEFAULTS.iter().enumerate() {
+        for (i, default) in keymap::factory_defaults(os).iter().enumerate() {
             let bytes = default.and_then(|a| a.encode(keymap::SLOTS[i].kind)).unwrap_or(KeyAction::UNASSIGNED);
             if default.is_some() {
                 mask |= 1 << i;
             }
-            out.push(Request::WriteRegister { addr: keymap::slot_addr(i as u8), data: bytes.to_vec() });
+            out.push(Request::WriteRegister { addr: keymap::slot_addr(os, i as u8), data: bytes.to_vec() });
         }
         let [lo, hi] = mask.to_le_bytes();
-        let hi = (self.byte(keymap::ENABLE_MASK_ADDR + 1).unwrap_or(0) & !0x1F) | hi;
-        out.push(Request::write_u8(keymap::ENABLE_MASK_ADDR, lo));
-        out.push(Request::write_u8(keymap::ENABLE_MASK_ADDR + 1, hi));
+        let hi_addr = os.mask_addr() + 1;
+        let hi = (self.byte(hi_addr).unwrap_or(0) & !0x1F) | hi;
+        out.push(Request::write_u8(os.mask_addr(), lo));
+        out.push(Request::write_u8(hi_addr, hi));
         out
     }
 }
@@ -385,6 +420,13 @@ mod tests {
         }
     }
 
+    fn req_len(req: &Request) -> usize {
+        match req {
+            Request::ReadRegister { len, .. } => *len as usize,
+            _ => 0,
+        }
+    }
+
     fn synced_state() -> KeyboardState {
         let plan = sync_plan();
         let mut state = KeyboardState::new();
@@ -405,7 +447,7 @@ mod tests {
         assert_eq!(state.register(&registers::CHARGE_RESERVE), Some(30));
         assert_eq!(state.status(), Some(&[0, 0, 0, 2][..]));
         assert_eq!(state.wireless_charging(), Some(false));
-        let slots = state.key_slots();
+        let slots = state.key_slots(Os::Android);
         assert_eq!(slots.len(), 13);
         for slot in &slots {
             assert_eq!(slot.action, keymap::FACTORY_DEFAULTS[slot.index as usize]);
@@ -418,12 +460,13 @@ mod tests {
     fn key_slot_writes_match_official_app() {
         let state = synced_state();
         let reqs = state
-            .set_key_slot(0, Some(KeyAction::Combo { modifier: 0xE0, usage: 0x2C }))
+            .set_key_slot(Os::Android, 0, Some(KeyAction::Combo { modifier: 0xE0, usage: 0x2C }))
             .unwrap();
         let wire: Vec<_> = reqs.iter().map(|r| r.encode().unwrap()).collect();
         assert_eq!(wire, vec![hex("ff042412fdbd"), hex("ff052416e02c49")]);
-        assert_eq!(state.set_key_slot(0, None).unwrap()[0].encode().unwrap(), hex("ff042412fcd9"));
-        let reqs = state.set_key_slot(1, Some(KeyAction::Combo { modifier: 0xE2, usage: 0x07 })).unwrap();
+        assert_eq!(state.set_key_slot(Os::Android, 0, None).unwrap()[0].encode().unwrap(), hex("ff042412fcd9"));
+        let reqs =
+            state.set_key_slot(Os::Android, 1, Some(KeyAction::Combo { modifier: 0xE2, usage: 0x07 })).unwrap();
         assert_eq!(reqs[0].encode().unwrap(), hex("ff042412fe11"));
         assert_eq!(reqs[1].encode().unwrap(), hex("ff05241ae2073b"));
     }
@@ -451,6 +494,10 @@ mod tests {
             let data = if i == 0 { block.clone() } else { vec![0xFF; 0x60] };
             state.apply(req, &Response { opcode: 0x29, status: 0, data });
         }
+        assert!(!state.is_synced(), "iOS key table not read yet");
+        for req in key_table_plan(Os::Ios) {
+            state.apply(&req, &Response { opcode: 0x25, status: 0, data: vec![0xFF; req_len(&req)] });
+        }
         assert!(state.is_synced());
         let hosts = state.hosts();
         let kinds: Vec<_> = hosts.iter().map(|h| h.kind).collect();
@@ -460,6 +507,12 @@ mod tests {
         assert_eq!(hosts[0].name.as_deref(), Some("iPhone 15 Pro"));
         assert_eq!(hosts[1].display_name(), "Android");
         assert!(hosts[1].active && !hosts[0].active);
+
+        assert_eq!(state.active_os(), Some(Os::Android));
+        // Slot 1 is iOS: only bit 0 of its pair changes (0x8E -> 0x8F).
+        assert_eq!(state.set_host_os(1, Os::Android).unwrap(), vec![Request::write_u8(0x0D, 0x8F)]);
+        assert_eq!(state.set_host_os(2, Os::Ios).unwrap(), vec![Request::write_u8(0x0D, 0x8A)]);
+        assert_eq!(state.set_host_os(3, Os::Android), Err(ModelError::HostNotPaired(3)));
 
         let reqs = state.remove_host(4).unwrap();
         assert_eq!(reqs[1], Request::write_u8(0x0D, 0x0E));
@@ -484,8 +537,35 @@ mod tests {
     fn shortcut_slots_reject_combos() {
         let state = synced_state();
         let combo = KeyAction::Combo { modifier: 0xE0, usage: 0x2C };
-        assert!(matches!(state.set_key_slot(4, Some(combo)), Err(ModelError::UnsupportedAction { .. })));
-        let reqs = state.set_key_slot(1, Some(KeyAction::Key { usage: 0x2D })).unwrap();
+        assert!(matches!(state.set_key_slot(Os::Android, 4, Some(combo)), Err(ModelError::UnsupportedAction { .. })));
+        let reqs = state.set_key_slot(Os::Android, 1, Some(KeyAction::Key { usage: 0x2D })).unwrap();
         assert_eq!(reqs[1], Request::WriteRegister { addr: 0x1A, data: vec![0x00, 0x2D] });
+    }
+
+    #[test]
+    fn ios_table_is_interleaved() {
+        let mut state = synced_state();
+        assert_eq!(state.set_key_slot(Os::Ios, 0, None), Err(ModelError::NotSynced));
+        // Factory iOS mask, then slot 5 (Sym + 2) = media Volume Up.
+        state.apply(
+            &Request::ReadRegister { addr: 0x10, len: 2 },
+            &Response { opcode: 0x25, status: 0, data: vec![0xF0, 0x1F] },
+        );
+        state.apply(
+            &Request::ReadRegister { addr: 0x28, len: 2 },
+            &Response { opcode: 0x25, status: 0, data: vec![0xE9, 0xFF] },
+        );
+        let slot = state.key_slot(Os::Ios, 5).unwrap();
+        assert!(slot.enabled);
+        assert_eq!(slot.action, keymap::IOS_FACTORY_DEFAULTS[5]);
+        assert_eq!(state.key_slot(Os::Android, 5).unwrap().action, keymap::FACTORY_DEFAULTS[5]);
+        let reqs = state.set_key_slot(Os::Ios, 0, Some(KeyAction::Key { usage: 0x2B })).unwrap();
+        assert_eq!(
+            reqs,
+            vec![Request::write_u8(0x10, 0xF1), Request::WriteRegister { addr: 0x14, data: vec![0x00, 0x2B] }]
+        );
+        let reset = state.reset_key_slots(Os::Ios);
+        assert_eq!(reset[5], Request::WriteRegister { addr: 0x28, data: vec![0xE9, 0xFF] });
+        assert_eq!(&reset[13..], &[Request::write_u8(0x10, 0xF0), Request::write_u8(0x11, 0x1F)]);
     }
 }

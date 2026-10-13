@@ -6,7 +6,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use clicks_ble::{discover, Keyboard};
 use clicks_core::registers::{self, RegisterKind};
-use clicks_core::{firmware, frame, hosts, keymap, KeyAction, KeyboardState, Request};
+use clicks_core::{firmware, frame, hosts, keymap, KeyAction, KeyboardState, Os, Request};
 
 #[derive(Parser)]
 #[command(name = "clicks", about = "Configure a Clicks Power Keyboard over BLE")]
@@ -34,11 +34,19 @@ enum Command {
     /// Enable or disable wireless charging pass-through.
     Charging { state: OnOff },
     /// Assign a key slot (`clicks key 0 ctrl+space`) or disable it (`clicks key 0 off`).
-    Key { slot: u8, action: String },
+    Key {
+        slot: u8,
+        action: String,
+        /// Key table to edit (ios or android); defaults to the active host's.
+        #[arg(long)]
+        os: Option<String>,
+    },
     /// Name a paired host slot (1–9); an empty name restores the default.
     HostName { slot: u8, name: String },
     /// Forget a paired host slot (1–9).
     HostRemove { slot: u8 },
+    /// Switch a paired host slot (1–9) between the ios and android key tables.
+    HostOs { slot: u8, os: String },
     /// Check for a firmware update and optionally download it (flashing is not supported).
     Firmware {
         /// Download and verify the image.
@@ -61,7 +69,11 @@ enum Command {
         diff: Option<PathBuf>,
     },
     /// Restore all key slots to factory defaults.
-    ResetKeys,
+    ResetKeys {
+        /// Key table to reset (ios or android); defaults to the active host's.
+        #[arg(long)]
+        os: Option<String>,
+    },
     /// Send a raw request payload (hex, without framing): `clicks raw 2502 01`.
     Raw { hex: Vec<String> },
 }
@@ -119,11 +131,14 @@ fn print_state(state: &KeyboardState) {
     if let Some(s) = state.status() {
         println!("  {:<14}        {:<28} {:02x?}", "status", "", s);
     }
-    println!("\nKey slots");
-    for s in state.key_slots() {
-        let native = keymap::SLOTS[s.index as usize].native;
-        let action = if s.enabled { s.description.clone().unwrap_or_default() } else { format!("({native})") };
-        println!("  {:>2} [{:#04x}] {:<14} {action}", s.index, keymap::slot_addr(s.index), s.label);
+    for os in Os::ALL {
+        let active = if state.active_os() == Some(os) { "  (active)" } else { "" };
+        println!("\nKey slots, {}{active}", os.label());
+        for s in state.key_slots(os) {
+            let native = keymap::SLOTS[s.index as usize].native;
+            let action = if s.enabled { s.description.clone().unwrap_or_default() } else { format!("({native})") };
+            println!("  {:>2} [{:#04x}] {:<14} {action}", s.index, keymap::slot_addr(os, s.index), s.label);
+        }
     }
     println!("\nPaired hosts");
     for h in state.hosts() {
@@ -215,15 +230,23 @@ async fn run(cli: &Cli, kb: &Keyboard) -> Result<()> {
             kb.update(|s| s.remove_host(*slot)).await?;
             println!("host {slot} removed");
         }
-        Command::Key { slot, action } => {
+        Command::HostOs { slot, os } => {
+            let os: Os = os.parse().map_err(anyhow::Error::msg)?;
+            sync_one(kb, &[hosts::kind_location((*slot).clamp(1, hosts::SLOT_COUNT)).0]).await?;
+            kb.update(|s| s.set_host_os(*slot, os)).await?;
+            println!("host {slot} now uses the {} key table", os.label());
+        }
+        Command::Key { slot, action, os } => {
             let action = match action.as_str() {
                 "off" | "none" => None,
                 a => Some(a.parse::<KeyAction>()?),
             };
-            sync_one(kb, &[keymap::ENABLE_MASK_ADDR, keymap::ENABLE_MASK_ADDR + 1]).await?;
-            let s = kb.update(|s| s.set_key_slot(*slot, action)).await?;
-            if let Some(k) = s.key_slot(*slot) {
-                println!("slot {slot}: {}", if k.enabled { k.description.unwrap_or_default() } else { "off".into() });
+            let os = key_table(kb, os.as_deref()).await?;
+            sync_one(kb, &[os.mask_addr(), os.mask_addr() + 1]).await?;
+            let s = kb.update(|s| s.set_key_slot(os, *slot, action)).await?;
+            if let Some(k) = s.key_slot(os, *slot) {
+                let what = if k.enabled { k.description.unwrap_or_default() } else { "off".into() };
+                println!("slot {slot} ({}): {what}", os.label());
             }
         }
         Command::Regs { save, diff } => {
@@ -259,10 +282,11 @@ async fn run(cli: &Cli, kb: &Keyboard) -> Result<()> {
                 eprintln!("saved to {}", path.display());
             }
         }
-        Command::ResetKeys => {
-            sync_one(kb, &[keymap::ENABLE_MASK_ADDR + 1]).await?;
-            kb.update(|s| Ok(s.reset_key_slots())).await?;
-            println!("key slots restored");
+        Command::ResetKeys { os } => {
+            let os = key_table(kb, os.as_deref()).await?;
+            sync_one(kb, &[os.mask_addr() + 1]).await?;
+            kb.update(|s| Ok(s.reset_key_slots(os))).await?;
+            println!("{} key slots restored", os.label());
         }
         Command::Raw { hex } => {
             let payload = parse_hex(hex)?;
@@ -323,6 +347,15 @@ async fn firmware_cmd(installed: Option<(String, String)>, download: bool, out: 
 const REG_SPACE: u8 = 0x48;
 
 /// Reads single-byte registers needed to compute a read-modify-write.
+/// The table named by `--os`, or the one the keyboard is using.
+async fn key_table(kb: &Keyboard, os: Option<&str>) -> Result<Os> {
+    if let Some(os) = os {
+        return os.parse().map_err(anyhow::Error::msg);
+    }
+    sync_one(kb, &[hosts::ACTIVE_ADDR, hosts::KIND_ADDR, hosts::KIND_ADDR + 1, hosts::KIND_ADDR + 2]).await?;
+    kb.state().active_os().context("couldn't read the active host; pass --os")
+}
+
 async fn sync_one(kb: &Keyboard, addrs: &[u8]) -> Result<()> {
     for &addr in addrs {
         kb.request(&Request::ReadRegister { addr, len: 1 }).await?;

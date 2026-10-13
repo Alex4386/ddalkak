@@ -15,7 +15,7 @@ use std::sync::Mutex;
 
 use clicks_core::keymap::SlotKind;
 use clicks_core::registers::{self, RegisterKind};
-use clicks_core::{gatt, hosts, keymap, HostKind, KeyAction, Request, Session, SessionEvent};
+use clicks_core::{gatt, hosts, keymap, HostKind, KeyAction, Os, Request, Session, SessionEvent};
 
 uniffi::setup_scaffolding!();
 
@@ -163,6 +163,31 @@ impl From<HostKind> for FfiHostKind {
     }
 }
 
+/// The keyboard's two key tables; it uses the active host's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiOs {
+    Ios,
+    Android,
+}
+
+impl From<Os> for FfiOs {
+    fn from(o: Os) -> Self {
+        match o {
+            Os::Ios => FfiOs::Ios,
+            Os::Android => FfiOs::Android,
+        }
+    }
+}
+
+impl From<FfiOs> for Os {
+    fn from(o: FfiOs) -> Self {
+        match o {
+            FfiOs::Ios => Os::Ios,
+            FfiOs::Android => Os::Android,
+        }
+    }
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct RegisterValue {
     pub id: String,
@@ -175,6 +200,8 @@ pub struct RegisterValue {
 
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct KeySlotValue {
+    /// Which key table this slot belongs to.
+    pub os: FfiOs,
     pub index: u8,
     pub kind: FfiSlotKind,
     /// e.g. "Tab key", "Sym + 3".
@@ -184,7 +211,7 @@ pub struct KeySlotValue {
     pub enabled: bool,
     pub action: Option<FfiKeyAction>,
     pub description: Option<String>,
-    /// Choices the official app offers; `None` entries mean "disabled".
+    /// Suggested choices; `None` entries mean "disabled".
     pub presets: Vec<Option<FfiKeyAction>>,
 }
 
@@ -204,7 +231,10 @@ pub struct KeyboardSnapshot {
     pub synced: bool,
     pub settings: Vec<RegisterValue>,
     pub info: Vec<RegisterValue>,
+    /// Both tables, iOS first.
     pub key_slots: Vec<KeySlotValue>,
+    /// The table the keyboard is using: the active host's.
+    pub active_os: Option<FfiOs>,
     pub hosts: Vec<HostValue>,
     pub wireless_charging: Option<bool>,
     pub status: Option<Vec<u8>>,
@@ -304,21 +334,27 @@ impl ClicksSession {
         Ok(())
     }
 
+    /// Switches a paired host between the iOS and Android key tables.
+    pub fn set_host_os(&self, slot: u8, os: FfiOs) -> Result<(), ClicksError> {
+        self.with(|s| s.enqueue_with(|st| st.set_host_os(slot, os.into())))?;
+        Ok(())
+    }
+
     /// Forgets a paired host (fails for the active one).
     pub fn remove_host(&self, slot: u8) -> Result<(), ClicksError> {
         self.with(|s| s.enqueue_with(|st| st.remove_host(slot)))?;
         Ok(())
     }
 
-    /// `None` disables the slot.
-    pub fn set_key_slot(&self, index: u8, action: Option<FfiKeyAction>) -> Result<(), ClicksError> {
-        self.with(|s| s.enqueue_with(|st| st.set_key_slot(index, action.map(Into::into))))?;
+    /// Edits `os`'s key table; `None` disables the slot.
+    pub fn set_key_slot(&self, os: FfiOs, index: u8, action: Option<FfiKeyAction>) -> Result<(), ClicksError> {
+        self.with(|s| s.enqueue_with(|st| st.set_key_slot(os.into(), index, action.map(Into::into))))?;
         Ok(())
     }
 
-    pub fn reset_key_slots(&self) {
+    pub fn reset_key_slots(&self, os: FfiOs) {
         self.with(|s| {
-            let reqs = s.projected_state().reset_key_slots();
+            let reqs = s.projected_state().reset_key_slots(os.into());
             s.enqueue(reqs);
         });
     }
@@ -361,12 +397,13 @@ impl ClicksSession {
                 synced: st.is_synced(),
                 settings: registers::SETTINGS.iter().map(|r| register_value(r, st.register(r))).collect(),
                 info: registers::INFO.iter().map(|r| register_value(r, st.register(r))).collect(),
-                key_slots: st
-                    .key_slots()
+                key_slots: Os::ALL
                     .into_iter()
+                    .flat_map(|os| st.key_slots(os))
                     .map(|k| {
                         let info = &keymap::SLOTS[k.index as usize];
                         KeySlotValue {
+                            os: k.os.into(),
                             index: k.index,
                             kind: k.kind.into(),
                             label: k.label.into(),
@@ -374,10 +411,11 @@ impl ClicksSession {
                             enabled: k.enabled,
                             action: k.action.map(Into::into),
                             description: k.description,
-                            presets: info.presets.iter().map(|p| p.map(Into::into)).collect(),
+                            presets: info.presets(k.os).iter().map(|p| p.map(Into::into)).collect(),
                         }
                     })
                     .collect(),
+                active_os: st.active_os().map(Into::into),
                 hosts: st
                     .hosts()
                     .into_iter()
