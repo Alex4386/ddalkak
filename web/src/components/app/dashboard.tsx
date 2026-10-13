@@ -13,7 +13,7 @@ import { AdvancedPanel } from "./advanced-panel";
 import { FirmwarePanel } from "./firmware-panel";
 import { BatteryBadge } from "./header";
 import { HostsPanel } from "./hosts-panel";
-import { KeyboardPreview, slotKey } from "./keyboard-preview";
+import { KeyboardPreview, slotKeys } from "./keyboard-preview";
 import { KeysPanel } from "./keys-panel";
 import { SettingsPanel } from "./settings-panel";
 
@@ -57,11 +57,7 @@ function Overview() {
           {battery != null && <BatteryBadge level={battery} />}
         </div>
 
-        <KeyboardPreview
-          glow={glow}
-          highlight={highlight == null ? undefined : slotKey(highlight)}
-          chord={highlight != null && highlight >= 4 ? `+${highlight - 3}` : undefined}
-        />
+        <KeyboardPreview glow={glow} highlight={highlight == null ? undefined : slotKeys(highlight)} />
 
         <dl className="grid grid-cols-2 gap-3 text-sm">
           <div className="rounded-lg bg-muted/50 p-3">
