@@ -15,24 +15,23 @@ type Glyph = "shift" | "backspace" | "enter" | "meta" | "clicks" | "keyboard" | 
 type Cap = { x: number; w: number; label?: string; alt?: string; glyph?: Glyph; text?: string; id?: KeyId; red?: boolean };
 type Row = { y: number; h: number; caps: Cap[] };
 
-// Traced from the official app's Power Keyboard render (1920×1080): the rows
-// fan out towards the bottom, so each row has its own pitch.
-const row = (y: number, h: number, x0: number, pitch: number, w: number, caps: Omit<Cap, "x" | "w">[]): Row => ({
+// Viewed straight from above: every row sits on the same ten columns.
+const PITCH = 170;
+const KEY_W = 148;
+const col = (i: number) => 185 + i * PITCH;
+const row = (y: number, h: number, caps: Omit<Cap, "x" | "w">[]): Row => ({
   y,
   h,
-  caps: caps.map((c, i) => ({ ...c, x: x0 + i * pitch, w })),
+  caps: caps.map((c, i) => ({ ...c, x: col(i), w: KEY_W })),
 });
 
 const ROWS: Row[] = [
   row(
-    293,
-    50,
-    248,
-    158.2,
-    128,
+    125,
+    56,
     "1234567890".split("").map((d) => ({ label: d, id: d === "0" ? undefined : (d as KeyId) })),
   ),
-  row(380, 96, 228, 162.4, 132, [
+  row(235, 100, [
     { label: "Q", alt: "#" },
     { label: "W", alt: "▲" },
     { label: "E", alt: "~" },
@@ -44,7 +43,7 @@ const ROWS: Row[] = [
     { label: "O", alt: "+" },
     { label: "P", alt: "@" },
   ]),
-  row(490, 100, 207, 166.6, 136, [
+  row(355, 100, [
     { label: "A", alt: "◀" },
     { label: "S", alt: "▼" },
     { label: "D", alt: "▶" },
@@ -56,7 +55,7 @@ const ROWS: Row[] = [
     { label: "L", alt: '"' },
     { glyph: "backspace", id: "backspace" },
   ]),
-  row(603, 104, 187, 172.2, 140, [
+  row(475, 100, [
     { glyph: "shift" },
     { label: "Z", alt: "%" },
     { label: "X", alt: "&" },
@@ -69,16 +68,17 @@ const ROWS: Row[] = [
     { glyph: "enter" },
   ]),
   {
-    y: 720,
-    h: 104,
+    y: 595,
+    h: 100,
     caps: [
-      { x: 250, w: 144, text: "sym", id: "sym" },
-      { x: 428, w: 144, text: "ctrl" },
-      { x: 606, w: 144, glyph: "meta" },
-      { x: 958, w: 496 },
-      { x: 1312, w: 144, glyph: "clicks", id: "tab", red: true },
-      { x: 1490, w: 144, glyph: "keyboard", id: "alt" },
-      { x: 1666, w: 144, glyph: "voice", id: "gemini" },
+      { x: col(0), w: KEY_W, text: "sym", id: "sym" },
+      { x: col(1), w: KEY_W, text: "ctrl" },
+      { x: col(2), w: KEY_W, glyph: "meta" },
+      // The space bar covers the middle four columns.
+      { x: (col(3) + col(6)) / 2, w: 3 * PITCH + KEY_W },
+      { x: col(7), w: KEY_W, glyph: "clicks", id: "tab", red: true },
+      { x: col(8), w: KEY_W, glyph: "keyboard", id: "alt" },
+      { x: col(9), w: KEY_W, glyph: "voice", id: "gemini" },
     ],
   },
 ];
@@ -144,8 +144,7 @@ function Key({ cap, y, h, on, legend }: { cap: Cap; y: number; h: number; on: bo
   const color = on || cap.red ? "#fff" : legend;
   const small = h < 60;
   return (
-    <g transform={`translate(${cap.x} ${y})`} className="transition-transform duration-300" style={on ? { transform: `translate(${cap.x}px, ${y - 6}px)` } : undefined}>
-      <rect x={-cap.w / 2} y={-h / 2 + 8} width={cap.w} height={h} rx={h / 2} fill="#000" opacity={0.7} />
+    <g transform={`translate(${cap.x} ${y})`}>
       <rect
         x={-cap.w / 2}
         y={-h / 2}
@@ -200,11 +199,11 @@ export function KeyboardPreview({
   // at full brightness.
   const legend = `color-mix(in oklch, oklch(0.97 0.02 240) ${Math.round(glow * 100)}%, oklch(0.42 0 0))`;
   return (
-    <svg viewBox="30 110 1860 975" className={cn("w-full select-none drop-shadow-2xl", className)} aria-hidden>
+    <svg viewBox="0 0 1900 740" className={cn("w-full select-none drop-shadow-2xl", className)} aria-hidden>
       <defs>
         <linearGradient id="kp-body" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#1b1b1d" />
-          <stop offset="1" stopColor="#09090a" />
+          <stop offset="0" stopColor="#161618" />
+          <stop offset="1" stopColor="#111112" />
         </linearGradient>
         <linearGradient id="kp-key" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#262628" />
@@ -233,30 +232,13 @@ export function KeyboardPreview({
         </filter>
       </defs>
 
-      {/* Phone mount with the magnetic ring, then the keyboard body. */}
-      <path d="M150,110 H1770 V190 H150 Z" fill="#0c0c0d" />
-      <ellipse cx={960} cy={25} rx={480} ry={78} fill="#050505" stroke="#1d1d1f" strokeWidth={3} />
-      <path
-        d="M150,185 H1770 C1800,185 1816,200 1820,230 L1868,640 C1880,730 1880,800 1870,862 C1854,1000 1760,1075 1620,1075 H300 C160,1075 66,1000 50,862 C40,800 40,730 52,640 L100,230 C104,200 120,185 150,185 Z"
-        fill="url(#kp-body)"
-      />
-      <path d="M152,188 H1768" stroke="rgb(255 255 255 / 0.08)" strokeWidth={3} />
-      <path
-        d="M220,225 H1700 C1745,225 1765,245 1770,280 L1810,640 C1822,740 1790,830 1690,830 H230 C130,830 98,740 110,640 L150,280 C155,245 175,225 220,225 Z"
-        fill="#0e0e0f"
-        stroke="rgb(255 255 255 / 0.04)"
-        strokeWidth={2}
-      />
-      <rect x={130} y={215} width={1660} height={640} fill="url(#kp-backlight)" opacity={glow} className="transition-opacity duration-500" />
+      <rect x={20} y={20} width={1860} height={700} rx={110} fill="url(#kp-body)" stroke="rgb(255 255 255 / 0.06)" strokeWidth={3} />
+      <rect x={20} y={20} width={1860} height={700} rx={110} fill="url(#kp-backlight)" opacity={glow} className="transition-opacity duration-500" />
 
       {ROWS.map((r) =>
         r.caps.map((cap, i) => <Key key={`${r.y}-${i}`} cap={cap} y={r.y} h={r.h} on={cap.id != null && highlight.includes(cap.id)} legend={legend} />),
       )}
 
-      {/* Status LED, USB-C port and power key along the bottom edge. */}
-      <circle cx={538} cy={1022} r={13} fill="oklch(0.75 0.15 240)" opacity={0.4 + glow * 0.6} />
-      <rect x={845} y={1000} width={230} height={52} rx={26} fill="#030303" stroke="#1f1f21" strokeWidth={3} />
-      <rect x={1240} y={985} width={245} height={68} rx={22} fill="#0c0c0d" stroke="#232325" strokeWidth={3} />
     </svg>
   );
 }
