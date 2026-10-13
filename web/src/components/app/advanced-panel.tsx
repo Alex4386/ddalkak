@@ -1,7 +1,7 @@
-import { SendIcon } from "lucide-react";
+import { SendIcon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
 
-import { Alert, AlertDescription } from "@/components/reui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +40,16 @@ export function AdvancedPanel() {
 
   return (
     <div className="grid gap-4 xl:grid-cols-2">
+      <Alert variant="destructive" className="xl:col-span-2">
+        <TriangleAlertIcon />
+        <AlertTitle>Use at your own risk</AlertTitle>
+        <AlertDescription>
+          These tools talk to the keyboard directly, with no safety checks. A wrong write can change settings you can't
+          change back, unpair hosts or leave the keyboard misbehaving until a factory reset. Nothing here is supported
+          by Clicks.
+        </AlertDescription>
+      </Alert>
+
       <Frame>
         <FrameHeader>
           <FrameTitle>Registers</FrameTitle>
