@@ -294,7 +294,7 @@ function renderSettings(settings: Register[], wirelessCharging: boolean | null) 
     rows.set(r.id, row);
   }
   if (wirelessCharging != null) {
-    const [row, control] = settingRow("Wireless charging", "pass power through to the phone until the reserve is reached", true);
+    const [row, control] = settingRow("Charge the phone", "share the keyboard battery with the phone, down to the reserve below", true);
     control.append(toggle(wirelessCharging, (on) => apply("set_wireless_charging", { on })));
     rows.set("wirelessCharging", row);
   }
@@ -326,7 +326,7 @@ function renderSlots(slots: Slot[]) {
       group = s.kind;
       const head = document.createElement("tr");
       head.className = "group";
-      head.innerHTML = `<td colspan="3">${s.kind === "remap" ? "Key remapping <span class=\"badge\">Android app only</span>" : "Number row shortcuts"}</td>`;
+      head.innerHTML = `<td colspan="3">${s.kind === "remap" ? "Key remapping <span class=\"badge\">Android app only</span>" : "Sym + number keys"}</td>`;
       body.append(head);
     }
     const tr = document.createElement("tr");

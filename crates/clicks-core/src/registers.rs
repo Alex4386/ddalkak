@@ -43,8 +43,8 @@ pub const BRIGHTNESS: RegisterInfo = RegisterInfo {
     addr: 0x02,
     len: 1,
     kind: RegisterKind::Level { min: 0, max: 255, step: 1, unit: "" },
-    label: "Backlight brightness",
-    note: "0–255; the official app shows 0–100 % and writes round(255 × percent)",
+    label: "Brightness",
+    note: "stored as 0–255; shown as a percentage",
 };
 
 pub const CHARGE_RESERVE: RegisterInfo = RegisterInfo {
@@ -52,8 +52,8 @@ pub const CHARGE_RESERVE: RegisterInfo = RegisterInfo {
     addr: 0x03,
     len: 1,
     kind: RegisterKind::Level { min: 0, max: 50, step: 10, unit: "%" },
-    label: "Power reserved for keyboard",
-    note: "battery kept for the keyboard before wireless charging stops; 0 = all power available",
+    label: "Keyboard battery reserve",
+    note: "phone charging stops when the keyboard is down to this much; 0 shares all of it",
 };
 
 pub const DIM_TIMEOUT: RegisterInfo = RegisterInfo {
@@ -61,8 +61,8 @@ pub const DIM_TIMEOUT: RegisterInfo = RegisterInfo {
     addr: 0x04,
     len: 2,
     kind: RegisterKind::Duration { unit_ms: 1, presets: &[2000, 5000, 15000, 30000, 45000, 60000] },
-    label: "Backlight dim timeout",
-    note: "milliseconds",
+    label: "Dim backlight after",
+    note: "",
 };
 
 pub const IDLE_TIMEOUT: RegisterInfo = RegisterInfo {
@@ -70,8 +70,8 @@ pub const IDLE_TIMEOUT: RegisterInfo = RegisterInfo {
     addr: 0x06,
     len: 2,
     kind: RegisterKind::Duration { unit_ms: 1000, presets: &[120, 300, 900, 1800, 2700, 3600] },
-    label: "Idle timeout",
-    note: "seconds before the keyboard disconnects to save battery; any key reconnects",
+    label: "Sleep after",
+    note: "drops the connection when unused to save power; press any key to wake it",
 };
 
 pub const FEATURES: RegisterInfo = RegisterInfo {
@@ -84,28 +84,28 @@ pub const FEATURES: RegisterInfo = RegisterInfo {
             FlagBit {
                 bit: 5,
                 id: "backlightShortcut",
-                label: "Backlight shortcut",
-                note: "Sym + mic toggles the backlight",
+                label: "Backlight toggle key",
+                note: "turn the light on or off with Sym + mic",
             },
             FlagBit {
                 bit: 1,
                 id: "symLock",
-                label: "Sym Lock",
-                note: "double-tap Sym to lock; Shift or Sym exits",
+                label: "Symbol lock",
+                note: "tap Sym twice to stay on the symbol layer",
             },
             FlagBit {
                 bit: 2,
                 id: "capsLock",
-                label: "Caps Lock",
-                note: "double-tap Shift to lock; Shift or Sym exits",
+                label: "Caps lock",
+                note: "tap Shift twice to type in capitals",
             },
             FlagBit {
                 bit: 4,
                 id: "cursorMode",
-                label: "Cursor mode",
-                note: "Sym + Meta makes WASD/IJKL arrow keys until another key is pressed",
+                label: "Arrow-key mode",
+                note: "Sym + Meta turns WASD and IJKL into arrows; any other key ends it",
             },
-            FlagBit { bit: 3, id: "softReturn", label: "Soft return", note: "only shown by the official iOS app" },
+            FlagBit { bit: 3, id: "softReturn", label: "Soft line break", note: "offered by the iOS app only" },
         ],
     },
     label: "Keyboard features",
@@ -118,7 +118,7 @@ pub const ACTIVE_HOST: RegisterInfo = RegisterInfo {
     len: 1,
     kind: RegisterKind::ReadOnly,
     label: "Active host slot",
-    note: "1-based; switch with power key + slot key",
+    note: "1-based",
 };
 pub const HOST_KINDS_1_4: RegisterInfo = RegisterInfo {
     id: "hostKinds1",

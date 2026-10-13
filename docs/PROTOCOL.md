@@ -57,12 +57,12 @@ The capture's lone `26 00 04 00 04` was the user enabling wireless charging.
 
 ## Registers
 
-| Addr      | Size | Name (official app)          | Encoding |
+| Addr      | Size | Meaning                      | Encoding |
 |-----------|------|------------------------------|----------|
-| `02`      | 1    | Backlight brightness         | 0–255; the app shows 0–100 % (`round(255·p)`) |
-| `03`      | 1    | Power reserved for keyboard  | percent 0–50, step 10; 0 = all power to wireless charging |
-| `04`      | 2    | Backlight dim timeout        | **ms**; app offers 2/5/15/30/45/60 s |
-| `06`      | 2    | Idle timeout                 | **s** before disconnecting to save power; 2/5/15/30/45/60 min |
+| `02`      | 1    | Backlight brightness         | 0–255; percentages map as `round(255·p)` |
+| `03`      | 1    | Battery kept for the keyboard when charging the phone | percent 0–50, step 10; 0 = share everything |
+| `04`      | 2    | Delay before the backlight dims | **ms**; app steps 2/5/15/30/45/60 s |
+| `06`      | 2    | Inactivity before disconnecting | **s**; app steps 2/5/15/30/45/60 min |
 | `08`      | 1    | Feature switches             | bits below |
 | `0C`      | 1    | Active host slot             | 1-based |
 | `0D`–`0F` | 1 each | Host types                 | 2 bits per slot (below) |
@@ -75,23 +75,23 @@ Factory values: `02`=`91`, `03`=30, `04`=5000, `06`=300, `08`=`05`, mask `FC 1F`
 
 | Bit | Name               | Behaviour |
 |-----|--------------------|-----------|
-| 0   | Backlight          | |
-| 1   | Sym Lock           | double-tap Sym locks the symbol layer; Shift or Sym exits |
-| 2   | Caps Lock          | double-tap Shift locks capitals |
-| 3   | Soft return        | exposed only by the official iOS app |
-| 4   | Cursor mode        | Sym + Meta turns WASD/IJKL into arrows until another key |
-| 5   | Backlight shortcut | Sym + mic toggles the backlight |
+| 0   | Backlight          | light on/off |
+| 1   | Symbol lock        | Sym twice keeps the symbol layer on |
+| 2   | Caps lock          | Shift twice keeps capitals on |
+| 3   | Soft line break    | only offered by the iOS app |
+| 4   | Arrow-key mode     | Sym + Meta makes WASD/IJKL arrows until another key |
+| 5   | Backlight toggle key | Sym + mic switches the light |
 
 ### Key slots
 
 13 slots at `0x16, 0x1A, … 0x46` (stride 4; only the first two bytes are
 used). A disabled slot (mask bit clear) gives the key its normal behaviour.
 
-| Slot | Addr | Key           | Official choices |
+| Slot | Addr | Key           | Choices the Android app offers |
 |------|------|---------------|------------------|
 | 0    | `16` | Tab           | Tab, Ctrl+Space |
 | 1    | `1A` | Gemini        | Gemini, `-`, Alt, Alt+D/K/S/. |
-| 2    | `1E` | Alt           | Alt, Alt+D (voice), Alt+K (soft keyboard), Alt+S (symbols), Alt+. (emoji) |
+| 2    | `1E` | Alt           | Alt, Alt+D, Alt+K, Alt+S, Alt+. (Android IME shortcuts) |
 | 3    | `22` | Backspace     | not in the UI; factory GUI+Left |
 | 4–12 | `26`–`46` | Sym + 1 … Sym + 9 | Escape, Volume ±/Mute, Play/Pause, Next, Prev, Page Up/Down, Home, End, `[`, `]` |
 
