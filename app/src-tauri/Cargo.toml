@@ -1,0 +1,23 @@
+[package]
+name = "clicks-companion"
+description = "Desktop companion app for the Clicks Power Keyboard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "clicks_companion_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+clicks-core = { workspace = true, features = ["serde", "firmware"] }
+clicks-ble.workspace = true
+tauri = { version = "2.12", features = [] }
+serde.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+log = "0.4"
+env_logger = "0.11"

@@ -1,0 +1,23 @@
+[package]
+name = "clicks-ffi"
+description = "UniFFI bindings (Swift/Kotlin) for clicks-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "clicks_ffi"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[dependencies]
+clicks-core = { workspace = true, features = ["firmware"] }
+thiserror.workspace = true
+uniffi = "0.32"
+
+[features]
+bindgen = ["uniffi/cli"]

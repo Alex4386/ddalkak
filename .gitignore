@@ -1,0 +1,12 @@
+/target
+node_modules/
+/app/dist/
+/app/src-tauri/gen/
+/swift/ClicksCoreFFI.xcframework
+/swift/Sources/ClicksCore/
+/swift/.build/
+.DS_Store
+
+# Android bugreports contain personal data (logs, addresses, serials).
+bugreport*.zip
+*.apk

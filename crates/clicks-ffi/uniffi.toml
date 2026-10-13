@@ -1,0 +1,7 @@
+[bindings.swift]
+module_name = "ClicksCore"
+ffi_module_name = "ClicksCoreFFI"
+ffi_module_filename = "ClicksCoreFFI"
+
+[bindings.kotlin]
+package_name = "app.clicks.core"

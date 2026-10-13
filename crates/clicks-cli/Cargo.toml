@@ -1,0 +1,19 @@
+[package]
+name = "clicks-cli"
+description = "Command-line companion for the Clicks Power Keyboard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "clicks"
+path = "src/main.rs"
+
+[dependencies]
+clicks-core = { workspace = true, features = ["firmware"] }
+clicks-ble.workspace = true
+tokio.workspace = true
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+env_logger = "0.11"
+reqwest.workspace = true

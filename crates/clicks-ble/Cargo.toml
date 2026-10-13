@@ -1,0 +1,15 @@
+[package]
+name = "clicks-ble"
+description = "btleplug transport for the Clicks Power Keyboard configuration service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+clicks-core.workspace = true
+btleplug.workspace = true
+tokio.workspace = true
+futures.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+log = "0.4"
