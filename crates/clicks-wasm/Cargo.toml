@@ -1,0 +1,15 @@
+[package]
+name = "clicks-wasm"
+description = "WebAssembly bindings for clicks-core, driven over Web Bluetooth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+clicks-core = { workspace = true, features = ["serde", "firmware"] }
+serde.workspace = true
+serde-wasm-bindgen = "0.6"
+wasm-bindgen = "=0.2.129"

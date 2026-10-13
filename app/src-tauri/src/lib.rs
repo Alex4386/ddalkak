@@ -5,9 +5,9 @@ use std::time::Duration;
 use clicks_ble::btleplug::platform::{Adapter, Peripheral};
 use clicks_ble::{Event, Keyboard};
 use clicks_core::firmware::{self, FirmwareInfo};
-use clicks_core::keymap::{self, KeyAction};
-use clicks_core::registers::{self, RegisterInfo};
-use clicks_core::{Host, KeySlot, KeyboardState, Request};
+use clicks_core::keymap::KeyAction;
+use clicks_core::view::{self, Snapshot};
+use clicks_core::Request;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{Mutex, OnceCell};
@@ -44,34 +44,6 @@ struct DeviceDto {
     connected: bool,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RegisterDto {
-    #[serde(flatten)]
-    info: RegisterInfo,
-    value: Option<u32>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SlotDto {
-    #[serde(flatten)]
-    slot: KeySlot,
-    addr: u8,
-    native: &'static str,
-    factory: Option<String>,
-    /// Official choices as parseable names; `None` = disabled.
-    presets: Vec<Option<String>>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct HostDto {
-    #[serde(flatten)]
-    host: Host,
-    display_name: String,
-}
-
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct InfoDto {
@@ -79,44 +51,6 @@ struct InfoDto {
     serial: Option<String>,
     firmware: Option<String>,
     battery: Option<u8>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SnapshotDto {
-    synced: bool,
-    settings: Vec<RegisterDto>,
-    info: Vec<RegisterDto>,
-    key_slots: Vec<SlotDto>,
-    hosts: Vec<HostDto>,
-    wireless_charging: Option<bool>,
-    status: Option<Vec<u8>>,
-}
-
-fn snapshot(state: &KeyboardState) -> SnapshotDto {
-    let reg = |r: &RegisterInfo| RegisterDto { info: *r, value: state.register(r) };
-    SnapshotDto {
-        synced: state.is_synced(),
-        settings: registers::SETTINGS.iter().map(reg).collect(),
-        info: registers::INFO.iter().map(reg).collect(),
-        key_slots: state
-            .key_slots()
-            .into_iter()
-            .map(|slot| {
-                let info = &keymap::SLOTS[slot.index as usize];
-                SlotDto {
-                    addr: keymap::slot_addr(slot.index),
-                    native: info.native,
-                    factory: keymap::FACTORY_DEFAULTS[slot.index as usize].map(KeyAction::describe),
-                    presets: info.presets.iter().map(|p| p.map(KeyAction::describe)).collect(),
-                    slot,
-                }
-            })
-            .collect(),
-        hosts: state.hosts().into_iter().map(|host| HostDto { display_name: host.display_name(), host }).collect(),
-        wireless_charging: state.wireless_charging(),
-        status: state.status().map(<[u8]>::to_vec),
-    }
 }
 
 #[tauri::command]
@@ -135,7 +69,7 @@ async fn list_devices(state: State<'_, AppState>, scan_secs: u64) -> CmdResult<V
 }
 
 #[tauri::command]
-async fn connect(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<SnapshotDto> {
+async fn connect(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<Snapshot> {
     if let Some(old) = state.keyboard.lock().await.take() {
         old.close().await;
     }
@@ -167,7 +101,7 @@ async fn connect(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdR
         })
         .await
         .map_err(err)?;
-    Ok(snapshot(&s))
+    Ok(view::snapshot(&s))
 }
 
 #[derive(Serialize, Clone)]
@@ -197,7 +131,7 @@ async fn device_info(state: State<'_, AppState>) -> CmdResult<InfoDto> {
 }
 
 #[tauri::command]
-async fn resync(app: AppHandle, state: State<'_, AppState>) -> CmdResult<SnapshotDto> {
+async fn resync(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Snapshot> {
     let kb = state.keyboard().await?;
     let s = kb
         .sync(|done, total| {
@@ -205,58 +139,58 @@ async fn resync(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Snapsho
         })
         .await
         .map_err(err)?;
-    Ok(snapshot(&s))
+    Ok(view::snapshot(&s))
 }
 
 #[tauri::command]
-async fn set_register(state: State<'_, AppState>, id: String, value: u32) -> CmdResult<SnapshotDto> {
+async fn set_register(state: State<'_, AppState>, id: String, value: u32) -> CmdResult<Snapshot> {
     let kb = state.keyboard().await?;
     let s = kb.update(|s| s.set_register(&id, value)).await.map_err(err)?;
-    Ok(snapshot(&s))
+    Ok(view::snapshot(&s))
 }
 
 #[tauri::command]
-async fn set_flag(state: State<'_, AppState>, bit: u8, on: bool) -> CmdResult<SnapshotDto> {
+async fn set_flag(state: State<'_, AppState>, bit: u8, on: bool) -> CmdResult<Snapshot> {
     let kb = state.keyboard().await?;
     let s = kb.update(|s| s.set_flag(bit, on)).await.map_err(err)?;
-    Ok(snapshot(&s))
+    Ok(view::snapshot(&s))
 }
 
 /// `action` is parsed with `KeyAction::from_str`; `None` disables the slot.
 #[tauri::command]
-async fn set_key_slot(state: State<'_, AppState>, index: u8, action: Option<String>) -> CmdResult<SnapshotDto> {
+async fn set_key_slot(state: State<'_, AppState>, index: u8, action: Option<String>) -> CmdResult<Snapshot> {
     let action = action.map(|a| a.parse::<KeyAction>()).transpose().map_err(err)?;
     let kb = state.keyboard().await?;
     let s = kb.update(|s| s.set_key_slot(index, action)).await.map_err(err)?;
-    Ok(snapshot(&s))
+    Ok(view::snapshot(&s))
 }
 
 #[tauri::command]
-async fn set_wireless_charging(state: State<'_, AppState>, on: bool) -> CmdResult<SnapshotDto> {
+async fn set_wireless_charging(state: State<'_, AppState>, on: bool) -> CmdResult<Snapshot> {
     let kb = state.keyboard().await?;
     let s = kb.update(|s| Ok(s.set_wireless_charging(on))).await.map_err(err)?;
-    Ok(snapshot(&s))
+    Ok(view::snapshot(&s))
 }
 
 #[tauri::command]
-async fn set_host_name(state: State<'_, AppState>, slot: u8, name: String) -> CmdResult<SnapshotDto> {
+async fn set_host_name(state: State<'_, AppState>, slot: u8, name: String) -> CmdResult<Snapshot> {
     let kb = state.keyboard().await?;
     let s = kb.update(|s| s.set_host_name(slot, &name)).await.map_err(err)?;
-    Ok(snapshot(&s))
+    Ok(view::snapshot(&s))
 }
 
 #[tauri::command]
-async fn remove_host(state: State<'_, AppState>, slot: u8) -> CmdResult<SnapshotDto> {
+async fn remove_host(state: State<'_, AppState>, slot: u8) -> CmdResult<Snapshot> {
     let kb = state.keyboard().await?;
     let s = kb.update(|s| s.remove_host(slot)).await.map_err(err)?;
-    Ok(snapshot(&s))
+    Ok(view::snapshot(&s))
 }
 
 #[tauri::command]
-async fn reset_key_slots(state: State<'_, AppState>) -> CmdResult<SnapshotDto> {
+async fn reset_key_slots(state: State<'_, AppState>) -> CmdResult<Snapshot> {
     let kb = state.keyboard().await?;
     let s = kb.update(|s| Ok(s.reset_key_slots())).await.map_err(err)?;
-    Ok(snapshot(&s))
+    Ok(view::snapshot(&s))
 }
 
 #[derive(Serialize)]
@@ -339,12 +273,7 @@ async fn download_firmware(app: AppHandle, info: FirmwareInfo) -> CmdResult<Stri
 /// Names the key-slot editor offers as suggestions.
 #[tauri::command]
 fn key_names() -> Vec<String> {
-    let keys: Vec<&str> = (0..=0xFFu8)
-        .filter(|&u| !keymap::is_modifier(u))
-        .filter_map(keymap::keyboard_usage_name)
-        .collect();
-    let consumer = (0..=0xFFu8).filter_map(keymap::consumer_usage_name).filter(|n| !keys.contains(n));
-    keys.iter().copied().chain(consumer).map(str::to_owned).collect()
+    view::key_names()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

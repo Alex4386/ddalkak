@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/clicks-core", "crates/clicks-ble", "crates/clicks-cli", "crates/clicks-ffi", "app/src-tauri"]
-default-members = ["crates/clicks-core", "crates/clicks-ble", "crates/clicks-cli", "crates/clicks-ffi"]
+members = ["crates/clicks-core", "crates/clicks-ble", "crates/clicks-cli", "crates/clicks-ffi", "crates/clicks-wasm", "app/src-tauri"]
+default-members = ["crates/clicks-core", "crates/clicks-ble", "crates/clicks-cli", "crates/clicks-ffi", "crates/clicks-wasm"]
 
 
 [workspace.package]

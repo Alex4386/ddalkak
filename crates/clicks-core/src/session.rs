@@ -140,6 +140,11 @@ impl Session {
         self.in_flight.take()
     }
 
+    /// Drops queued requests (not the one in flight), e.g. after a rejection.
+    pub fn clear_queue(&mut self) {
+        self.queue.clear();
+    }
+
     /// Call after a disconnect. Drops queued work and cached state.
     pub fn reset(&mut self) {
         *self = Self::default();
@@ -164,6 +169,17 @@ mod tests {
         assert_eq!(s.pending(), 1);
         assert!(s.handle_timeout().is_some());
         assert_eq!(s.pending(), 0);
+    }
+
+    #[test]
+    fn clear_queue_keeps_the_request_in_flight() {
+        let mut s = Session::new();
+        s.enqueue_sync();
+        assert!(s.poll_transmit().is_some());
+        s.clear_queue();
+        assert_eq!(s.pending(), 1);
+        s.handle_notification(&[0xff, 0x05, 0x02, 0x25, 0x00, 0x05, 0x73]);
+        assert_eq!((s.pending(), s.poll_transmit()), (0, None));
     }
 
     #[test]

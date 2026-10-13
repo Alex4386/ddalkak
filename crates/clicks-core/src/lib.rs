@@ -13,6 +13,8 @@ pub mod model;
 pub mod protocol;
 pub mod registers;
 pub mod session;
+#[cfg(feature = "serde")]
+pub mod view;
 
 pub use keymap::KeyAction;
 pub use hosts::{Host, HostKind};
