@@ -85,7 +85,17 @@ class Link {
 
   static async open(device: BluetoothDevice): Promise<Link> {
     const u = uuids();
-    const server = await device.gatt!.connect();
+    const server = await device.gatt!.connect().catch((e) => {
+      // Chrome on macOS lists paired keyboards from the system's paired-device
+      // list as Classic devices, which can't do GATT. The real (LE) keyboard
+      // only shows up while it's advertising, not while it's typing for the Mac.
+      if (e instanceof DOMException && /unsupported device/i.test(e.message)) {
+        throw new Error(
+          "Chrome only sees this keyboard through the system's paired-device list, which can't be used for settings. Use the desktop app instead.",
+        );
+      }
+      throw e;
+    });
     const service = await server.getPrimaryService(u.service).catch(() => {
       throw new Error("device does not expose the configuration service (fff0)");
     });

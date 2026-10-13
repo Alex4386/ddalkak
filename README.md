@@ -41,6 +41,11 @@ Browser support and limits:
 * The picker only lists keyboards the browser can see. On Linux the
   already-connected keyboard shows up; on macOS, Windows and Android the
   browser only finds devices that are advertising.
+* On macOS, a keyboard paired with the Mac does appear in the picker, but as
+  an entry from the system's paired-device list (a Classic device to Chrome),
+  and connecting fails with "Unsupported device". Chrome never asks
+  CoreBluetooth for already-connected LE peripherals, so use the desktop app
+  on a Mac the keyboard is connected to.
 * The serial number (`2a25`) is on the Web Bluetooth blocklist, so the web app
   doesn't show it.
 * The firmware server sends no CORS headers, so the browser can't check for
